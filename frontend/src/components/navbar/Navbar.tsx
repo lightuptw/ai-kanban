@@ -14,10 +14,10 @@ import {
 } from "@mui/material";
 
 
-import { Menu as MenuIcon, Edit as EditIcon, Check as CheckIcon } from "@mui/icons-material";
+import { Menu as MenuIcon, Edit as EditIcon, Check as CheckIcon, Delete as DeleteIcon } from "@mui/icons-material";
 
 import { RootState, AppDispatch } from "../../redux/store";
-import { updateBoard } from "../../store/slices/kanbanSlice";
+import { updateBoard, deleteBoard } from "../../store/slices/kanbanSlice";
 
 const AppBar = styled(MuiAppBar)`
   background: ${(props) => props.theme.header.background};
@@ -70,6 +70,13 @@ const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
     setEditing(false);
   };
 
+  const handleDelete = () => {
+    if (!activeBoardId) return;
+    if (window.confirm(`Delete board "${boardName}"? All cards in this board will be lost.`)) {
+      dispatch(deleteBoard(activeBoardId));
+    }
+  };
+
   return (
     <React.Fragment>
       <AppBar position="sticky" elevation={0}>
@@ -115,6 +122,18 @@ const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
               )}
             </Grid>
             <Grid item xs />
+            {activeBoardId && (
+              <Grid item>
+                <IconButton
+                  size="small"
+                  onClick={handleDelete}
+                  sx={{ color: '#d32f2f' }}
+                  aria-label="Delete board"
+                >
+                  <DeleteIcon sx={{ fontSize: '18px' }} />
+                </IconButton>
+              </Grid>
+            )}
           </Grid>
         </Toolbar>
       </AppBar>

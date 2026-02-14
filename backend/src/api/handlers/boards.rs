@@ -98,12 +98,6 @@ pub async fn delete_board(
 ) -> Result<StatusCode, KanbanError> {
     let db = state.require_db()?;
 
-    if id == "default" {
-        return Err(KanbanError::BadRequest(
-            "Cannot delete default board".to_string(),
-        ));
-    }
-
     let result = sqlx::query("DELETE FROM boards WHERE id = ?")
         .bind(&id)
         .execute(db)

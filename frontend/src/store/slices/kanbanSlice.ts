@@ -55,6 +55,19 @@ export const reorderBoard = createAsyncThunk(
   }
 );
 
+export const deleteBoard = createAsyncThunk(
+  "kanban/deleteBoard",
+  async (id: string, { getState, dispatch }) => {
+    await api.deleteBoard(id);
+    const state = (getState() as { kanban: KanbanState }).kanban;
+    const remaining = state.boards.filter((b) => b.id !== id);
+    if (state.activeBoardId === id && remaining.length > 0) {
+      dispatch(setActiveBoard(remaining[0].id));
+    }
+    return id;
+  }
+);
+
 export const createCard = createAsyncThunk("kanban/createCard", async (data: CreateCardRequest) => {
   return await api.createCard(data);
 });
@@ -206,6 +219,9 @@ const kanbanSlice = createSlice({
         if (idx !== -1) {
           state.boards[idx] = action.payload;
         }
+      })
+      .addCase(deleteBoard.fulfilled, (state, action: PayloadAction<string>) => {
+        state.boards = state.boards.filter((b) => b.id !== action.payload);
       });
   },
 });
