@@ -1,5 +1,0 @@
-/mnt/c/Users/ckl70/opencode/kanban/backend/target/debug/deps/matchers-9cd81f166bedc51a.d: /home/steven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/matchers-0.2.0/src/lib.rs
-
-/mnt/c/Users/ckl70/opencode/kanban/backend/target/debug/deps/libmatchers-9cd81f166bedc51a.rmeta: /home/steven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/matchers-0.2.0/src/lib.rs
-
-/home/steven/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/matchers-0.2.0/src/lib.rs:
