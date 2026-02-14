@@ -22,7 +22,7 @@ reqwest-eventsource = "0.6"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
-rmcp = { version = "0.15", features = ["server", "transport-io"] }
+rmcp = { version = "0.15", features = ["server", "transport-io", "transport-streamable-http-server"] }
 schemars = "1"
 
 [[bin]]

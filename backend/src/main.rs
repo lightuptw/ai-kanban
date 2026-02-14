@@ -8,7 +8,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use kanban_backend::api::{create_router, AppState};
 use kanban_backend::config::Config;
 use kanban_backend::infrastructure::db;
+use kanban_backend::mcp::KanbanMcp;
 use kanban_backend::services::SseRelayService;
+use rmcp::transport::streamable_http_server::{
+    session::local::LocalSessionManager, StreamableHttpService,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -61,8 +65,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Arc::new(config);
 
+    let mcp_pool = db_pool.clone();
     let state = AppState::new(db_pool, sse_tx, http_client, Arc::clone(&config));
-    let app = create_router(state, &config);
+
+    let mcp_service = StreamableHttpService::new(
+        move || Ok(KanbanMcp::new(mcp_pool.clone().expect("DB required for MCP"))),
+        LocalSessionManager::default().into(),
+        Default::default(),
+    );
+
+    let app = create_router(state, &config).route_service("/mcp", mcp_service);
 
     let addr: SocketAddr = format!("0.0.0.0:{}", config.port).parse()?;
     let listener = TcpListener::bind(addr).await?;
