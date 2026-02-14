@@ -1,0 +1,111 @@
+export type Stage = "backlog" | "plan" | "todo" | "in_progress" | "review" | "done";
+
+export interface Subtask {
+  id: string;
+  card_id: string;
+  title: string;
+  completed: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Label {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface Comment {
+  id: string;
+  card_id: string;
+  author: string;
+  content: string;
+  created_at: string;
+}
+
+export interface Card {
+  id: string;
+  title: string;
+  description: string;
+  stage: Stage;
+  position: number;
+  priority: string;
+  working_directory: string;
+  ai_session_id: string | null;
+  ai_status: string;
+  ai_progress: string;
+  plan_path: string | null;
+  linked_documents: string;
+  created_at: string;
+  updated_at: string;
+  subtask_count: number;
+  subtask_completed: number;
+  label_count: number;
+  comment_count: number;
+}
+
+export interface BoardResponse {
+  backlog: Card[];
+  plan: Card[];
+  todo: Card[];
+  in_progress: Card[];
+  review: Card[];
+  done: Card[];
+}
+
+export interface CreateCardRequest {
+  title: string;
+  description?: string;
+  stage?: Stage;
+  priority?: string;
+  working_directory?: string;
+  board_id?: string;
+}
+
+export interface UpdateCardRequest {
+  title?: string;
+  description?: string;
+  priority?: string;
+  working_directory?: string;
+  linked_documents?: string;
+}
+
+export interface MoveCardRequest {
+  stage: Stage;
+  position: number;
+}
+
+export interface CreateSubtaskRequest {
+  title: string;
+}
+
+export interface UpdateSubtaskRequest {
+  title?: string;
+  completed?: boolean;
+}
+
+export interface CreateCommentRequest {
+  author: string;
+  content: string;
+}
+
+export interface Board {
+  id: string;
+  name: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReorderBoardRequest {
+  position: number;
+}
+
+export interface CreateBoardRequest {
+  name: string;
+}
+
+export interface UpdateBoardRequest {
+  name: string;
+}
