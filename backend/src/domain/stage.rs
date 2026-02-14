@@ -36,6 +36,44 @@ impl Stage {
             Stage::Done,
         ]
     }
+
+    pub fn can_transition_to(&self, target: &Stage) -> bool {
+        use Stage::*;
+        match (self, target) {
+            (a, b) if a == b => true,
+            (_, Backlog) => true,
+            (Backlog, Plan) => true,
+            (Plan, Todo) => true,
+            (Todo, InProgress) => true,
+            (InProgress, Review) => true,
+            (Review, Done) => true,
+            (Review, Todo) => true,
+            _ => false,
+        }
+    }
+
+    pub fn transition_error(&self, target: &Stage) -> String {
+        format!(
+            "Invalid stage transition: {} → {}. Allowed transitions from {}: {}",
+            self,
+            target,
+            self,
+            self.allowed_next_stages().join(", ")
+        )
+    }
+
+    fn allowed_next_stages(&self) -> Vec<String> {
+        use Stage::*;
+        let stages = match self {
+            Backlog => vec![Plan, Backlog],
+            Plan => vec![Todo, Backlog],
+            Todo => vec![InProgress, Backlog],
+            InProgress => vec![Review, Backlog],
+            Review => vec![Done, Todo, Backlog],
+            Done => vec![Backlog],
+        };
+        stages.iter().map(|s| s.to_string()).collect()
+    }
 }
 
 impl fmt::Display for Stage {

@@ -3,11 +3,12 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use sqlx::SqlitePool;
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
 use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
-use crate::domain::KanbanError;
+use crate::domain::{Card, Comment, KanbanError, Stage};
 use crate::services::{AiDispatchService, CardService};
 
 pub async fn create_card(
@@ -53,19 +54,36 @@ pub async fn move_card(
 ) -> Result<Json<CardResponse>, KanbanError> {
     let pool = state.require_db()?;
     let previous_card = CardService::get_card_model(pool, &id).await?;
-    let target_stage = req.stage.clone();
+
+    let target_stage: Stage = req.stage.parse()
+        .map_err(|e: String| KanbanError::BadRequest(e))?;
+    let current_stage: Stage = previous_card.stage.parse()
+        .map_err(|e: String| KanbanError::Internal(format!("Invalid current stage in DB: {}", e)))?;
+
+    if !current_stage.can_transition_to(&target_stage) {
+        return Err(KanbanError::BadRequest(current_stage.transition_error(&target_stage)));
+    }
+
+    let is_review_to_todo = current_stage == Stage::Review && target_stage == Stage::Todo;
+
     let card = CardService::move_card(pool, &id, req).await?;
 
-    if target_stage == "todo" && previous_card.stage != "todo" {
-        let card_model = CardService::get_card_model(pool, &id).await?;
-        let subtasks = CardService::get_subtasks(pool, &id).await?;
+    if target_stage == Stage::Todo && previous_card.stage != "todo" {
+        if is_review_to_todo {
+            if let Err(e) = handle_review_redispatch(&state, &previous_card, pool).await {
+                tracing::warn!("Review re-dispatch failed for card {}: {}", id, e);
+            }
+        } else {
+            let card_model = CardService::get_card_model(pool, &id).await?;
+            let subtasks = CardService::get_subtasks(pool, &id).await?;
 
-        if let Err(e) =
-            AiDispatchService::new(state.http_client.clone(), state.config.opencode_url.clone())
-                .dispatch_card(&card_model, &subtasks, pool)
-                .await
-        {
-            tracing::warn!("AI dispatch failed for card {}: {}", id, e);
+            if let Err(e) =
+                AiDispatchService::new(state.http_client.clone(), state.config.opencode_url.clone())
+                    .dispatch_card(&card_model, &subtasks, pool)
+                    .await
+            {
+                tracing::warn!("AI dispatch failed for card {}: {}", id, e);
+            }
         }
 
         let updated_card = CardService::get_card_by_id(pool, &id).await?;
@@ -83,6 +101,48 @@ pub async fn move_card(
     }
 
     Ok(Json(card))
+}
+
+async fn handle_review_redispatch(
+    state: &AppState,
+    card: &Card,
+    pool: &SqlitePool,
+) -> Result<(), KanbanError> {
+    let comments: Vec<Comment> = sqlx::query_as(
+        "SELECT * FROM comments WHERE card_id = ? ORDER BY created_at DESC LIMIT 5",
+    )
+    .bind(&card.id)
+    .fetch_all(pool)
+    .await?;
+
+    let plan_path = card
+        .plan_path
+        .as_ref()
+        .ok_or_else(|| KanbanError::Internal("No plan path for re-dispatch".into()))?;
+
+    let existing_plan = std::fs::read_to_string(plan_path)
+        .map_err(|e| KanbanError::Internal(format!("Failed to read plan: {}", e)))?;
+
+    let mut updated_plan = existing_plan;
+    updated_plan.push_str("\n\n---\n\n## Review Feedback\n\n");
+    updated_plan.push_str("The following feedback was provided during review:\n\n");
+    for comment in &comments {
+        updated_plan.push_str(&format!("- **{}**: {}\n", comment.author, comment.content));
+    }
+    updated_plan.push_str(
+        "\n**Action Required**: Address the review feedback above and re-verify all acceptance criteria.\n",
+    );
+
+    std::fs::write(plan_path, &updated_plan)
+        .map_err(|e| KanbanError::Internal(format!("Failed to write plan: {}", e)))?;
+
+    let subtasks = CardService::get_subtasks(pool, &card.id).await?;
+
+    AiDispatchService::new(state.http_client.clone(), state.config.opencode_url.clone())
+        .dispatch_card(card, &subtasks, pool)
+        .await?;
+
+    Ok(())
 }
 
 pub async fn delete_card(
