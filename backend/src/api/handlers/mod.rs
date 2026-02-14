@@ -1,5 +1,8 @@
 pub mod cards;
+pub mod comments;
+pub mod labels;
 pub mod sse;
+pub mod subtasks;
 
 use axum::http::StatusCode;
 use axum::Json;

@@ -1,6 +1,8 @@
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
+use crate::domain::KanbanError;
+
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub db: Option<SqlitePool>,
@@ -19,5 +21,11 @@ impl AppState {
             sse_tx,
             http_client,
         }
+    }
+
+    pub fn require_db(&self) -> Result<&SqlitePool, KanbanError> {
+        self.db
+            .as_ref()
+            .ok_or_else(|| KanbanError::Internal("Database not available".into()))
     }
 }
