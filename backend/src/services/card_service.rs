@@ -23,6 +23,7 @@ impl CardService {
         let description = req.description.unwrap_or_default();
         let priority = req.priority.unwrap_or_else(|| "medium".into());
         let working_directory = req.working_directory.unwrap_or_else(|| ".".into());
+        let board_id = req.board_id.unwrap_or_else(|| "default".into());
 
         // Validate stage
         stage
@@ -38,7 +39,7 @@ impl CardService {
         let position = max_pos + 1000;
 
         sqlx::query(
-            "INSERT INTO cards (id, title, description, stage, position, priority, working_directory, ai_status, ai_progress, linked_documents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', '{}', '[]', ?, ?)"
+            "INSERT INTO cards (id, title, description, stage, position, priority, working_directory, board_id, ai_status, ai_progress, linked_documents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle', '{}', '[]', ?, ?)"
         )
         .bind(&id)
         .bind(&req.title)
@@ -47,6 +48,7 @@ impl CardService {
         .bind(position)
         .bind(&priority)
         .bind(&working_directory)
+        .bind(&board_id)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -62,7 +64,7 @@ impl CardService {
         let card = Self::get_card_model(pool, id).await?;
 
         let subtasks: Vec<Subtask> =
-            sqlx::query_as("SELECT * FROM subtasks WHERE card_id = ? ORDER BY position ASC")
+            sqlx::query_as("SELECT * FROM subtasks WHERE card_id = ? ORDER BY phase ASC, position ASC")
                 .bind(id)
                 .fetch_all(pool)
                 .await?;
@@ -93,8 +95,21 @@ impl CardService {
         Ok(card)
     }
 
-    pub async fn get_board(pool: &SqlitePool) -> Result<BoardResponse, KanbanError> {
-        let rows = sqlx::query(
+    pub async fn get_board(pool: &SqlitePool, board_id: Option<&str>) -> Result<BoardResponse, KanbanError> {
+        let query = if board_id.is_some() {
+            r#"
+            SELECT
+                c.id, c.title, c.description, c.stage, c.position, c.priority,
+                c.ai_status, c.created_at, c.updated_at,
+                COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id), 0) as subtask_count,
+                COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id AND s.completed = 1), 0) as subtask_completed,
+                COALESCE((SELECT COUNT(*) FROM card_labels cl WHERE cl.card_id = c.id), 0) as label_count,
+                COALESCE((SELECT COUNT(*) FROM comments co WHERE co.card_id = c.id), 0) as comment_count
+            FROM cards c
+            WHERE c.board_id = ?
+            ORDER BY c.position ASC
+            "#
+        } else {
             r#"
             SELECT
                 c.id, c.title, c.description, c.stage, c.position, c.priority,
@@ -105,10 +120,14 @@ impl CardService {
                 COALESCE((SELECT COUNT(*) FROM comments co WHERE co.card_id = c.id), 0) as comment_count
             FROM cards c
             ORDER BY c.position ASC
-            "#,
-        )
-        .fetch_all(pool)
-        .await?;
+            "#
+        };
+
+        let rows = if let Some(bid) = board_id {
+            sqlx::query(query).bind(bid).fetch_all(pool).await?
+        } else {
+            sqlx::query(query).fetch_all(pool).await?
+        };
 
         let mut board = BoardResponse {
             backlog: vec![],
@@ -168,20 +187,23 @@ impl CardService {
         let stage = req.stage.unwrap_or(existing.stage);
         let position = req.position.unwrap_or(existing.position);
         let priority = req.priority.unwrap_or(existing.priority);
+        let working_directory = req.working_directory.unwrap_or(existing.working_directory);
+        let linked_documents = req.linked_documents.unwrap_or(existing.linked_documents);
 
-        // Validate stage
         stage
             .parse::<Stage>()
             .map_err(|e| KanbanError::BadRequest(e))?;
 
         sqlx::query(
-            "UPDATE cards SET title = ?, description = ?, stage = ?, position = ?, priority = ?, updated_at = ? WHERE id = ?",
+            "UPDATE cards SET title = ?, description = ?, stage = ?, position = ?, priority = ?, working_directory = ?, linked_documents = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&title)
         .bind(&description)
         .bind(&stage)
         .bind(position)
         .bind(&priority)
+        .bind(&working_directory)
+        .bind(&linked_documents)
         .bind(&now)
         .bind(id)
         .execute(pool)
@@ -285,12 +307,14 @@ impl CardService {
         let position = max_pos + 1000;
 
         sqlx::query(
-            "INSERT INTO subtasks (id, card_id, title, completed, position, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?)",
+            "INSERT INTO subtasks (id, card_id, title, completed, position, phase, phase_order, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(card_id)
         .bind(&req.title)
         .bind(position)
+        .bind(&req.phase)
+        .bind(req.phase_order)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -306,7 +330,7 @@ impl CardService {
 
     pub async fn get_subtasks(pool: &SqlitePool, card_id: &str) -> Result<Vec<Subtask>, KanbanError> {
         let subtasks: Vec<Subtask> =
-            sqlx::query_as("SELECT * FROM subtasks WHERE card_id = ? ORDER BY position ASC")
+            sqlx::query_as("SELECT * FROM subtasks WHERE card_id = ? ORDER BY phase ASC, position ASC")
                 .bind(card_id)
                 .fetch_all(pool)
                 .await?;
@@ -328,10 +352,16 @@ impl CardService {
         let now = Utc::now().to_rfc3339();
         let title = req.title.unwrap_or(existing.title);
         let completed = req.completed.unwrap_or(existing.completed);
+        let phase = req.phase.unwrap_or(existing.phase);
+        let phase_order = req.phase_order.unwrap_or(existing.phase_order);
+        let position = req.position.unwrap_or(existing.position);
 
-        sqlx::query("UPDATE subtasks SET title = ?, completed = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE subtasks SET title = ?, completed = ?, phase = ?, phase_order = ?, position = ?, updated_at = ? WHERE id = ?")
             .bind(&title)
             .bind(completed)
+            .bind(&phase)
+            .bind(phase_order)
+            .bind(position)
             .bind(&now)
             .bind(id)
             .execute(pool)

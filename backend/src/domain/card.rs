@@ -26,6 +26,8 @@ pub struct Subtask {
     pub title: String,
     pub completed: bool,
     pub position: i64,
+    pub phase: String,
+    pub phase_order: i64,
     pub created_at: String,
     pub updated_at: String,
 }

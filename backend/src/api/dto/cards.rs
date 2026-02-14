@@ -13,6 +13,8 @@ pub struct CreateCardRequest {
     pub priority: Option<String>,
     #[serde(default)]
     pub working_directory: Option<String>,
+    #[serde(default)]
+    pub board_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +29,10 @@ pub struct UpdateCardRequest {
     pub position: Option<i64>,
     #[serde(default)]
     pub priority: Option<String>,
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub linked_documents: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +55,7 @@ pub struct CardResponse {
     pub ai_session_id: Option<String>,
     pub ai_status: String,
     pub ai_progress: serde_json::Value,
-    pub linked_documents: serde_json::Value,
+    pub linked_documents: String,
     pub created_at: String,
     pub updated_at: String,
     pub subtasks: Vec<Subtask>,
@@ -65,9 +71,6 @@ impl CardResponse {
         comments: Vec<Comment>,
     ) -> Self {
         let ai_progress = serde_json::from_str(&card.ai_progress).unwrap_or(serde_json::json!({}));
-        let linked_documents =
-            serde_json::from_str(&card.linked_documents).unwrap_or(serde_json::json!([]));
-
         Self {
             id: card.id,
             title: card.title,
@@ -80,7 +83,7 @@ impl CardResponse {
             ai_session_id: card.ai_session_id,
             ai_status: card.ai_status,
             ai_progress,
-            linked_documents,
+            linked_documents: card.linked_documents,
             created_at: card.created_at,
             updated_at: card.updated_at,
             subtasks,
@@ -120,6 +123,18 @@ pub struct BoardResponse {
 #[derive(Debug, Deserialize)]
 pub struct CreateSubtaskRequest {
     pub title: String,
+    #[serde(default = "default_phase_name")]
+    pub phase: String,
+    #[serde(default = "default_phase_order")]
+    pub phase_order: i64,
+}
+
+fn default_phase_name() -> String {
+    "Phase 1".into()
+}
+
+fn default_phase_order() -> i64 {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +143,12 @@ pub struct UpdateSubtaskRequest {
     pub title: Option<String>,
     #[serde(default)]
     pub completed: Option<bool>,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub phase_order: Option<i64>,
+    #[serde(default)]
+    pub position: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

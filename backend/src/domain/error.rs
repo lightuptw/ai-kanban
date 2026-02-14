@@ -4,20 +4,20 @@ use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum KanbanError {
-    #[error("not found: {0}")]
+    #[error("Not found: {0}")]
     NotFound(String),
 
-    #[error("bad request: {0}")]
+    #[error("Bad request: {0}")]
     BadRequest(String),
 
-    #[error("internal error: {0}")]
-    Internal(String),
-
-    #[error("database error: {0}")]
+    #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
-    #[error("serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    #[error("OpenCode error: {0}")]
+    OpenCodeError(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 impl IntoResponse for KanbanError {
@@ -26,15 +26,9 @@ impl IntoResponse for KanbanError {
             KanbanError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             KanbanError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             KanbanError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            KanbanError::OpenCodeError(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             KanbanError::Database(err) => {
                 tracing::error!("Database error: {:?}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal server error".into(),
-                )
-            }
-            KanbanError::Serialization(err) => {
-                tracing::error!("Serialization error: {:?}", err);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Internal server error".into(),

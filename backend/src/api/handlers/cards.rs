@@ -1,8 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
@@ -10,6 +11,11 @@ use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::{Card, Comment, KanbanError, Stage};
 use crate::services::{AiDispatchService, CardService};
+
+#[derive(Debug, Deserialize)]
+pub struct BoardQuery {
+    pub board_id: Option<String>,
+}
 
 pub async fn create_card(
     State(state): State<AppState>,
@@ -22,9 +28,10 @@ pub async fn create_card(
 
 pub async fn get_board(
     State(state): State<AppState>,
+    Query(query): Query<BoardQuery>,
 ) -> Result<Json<BoardResponse>, KanbanError> {
     let pool = state.require_db()?;
-    let board = CardService::get_board(pool).await?;
+    let board = CardService::get_board(pool, query.board_id.as_deref()).await?;
     Ok(Json(board))
 }
 
