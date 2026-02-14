@@ -6,6 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use kanban_backend::api::{create_router, AppState};
 use kanban_backend::config::Config;
+use kanban_backend::infrastructure::db;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,10 +27,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Config::default()
     });
 
+    let db_pool = match db::init_db(&config.database_url).await {
+        Ok(pool) => {
+            tracing::info!("Database initialized successfully");
+            Some(pool)
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize database: {}", e);
+            None
+        }
+    };
+
     let (sse_tx, _rx) = broadcast::channel::<String>(100);
     let http_client = reqwest::Client::new();
 
-    let state = AppState::new(None, sse_tx, http_client);
+    let state = AppState::new(db_pool, sse_tx, http_client);
     let app = create_router(state, &config);
 
     let addr: SocketAddr = format!("0.0.0.0:{}", config.port).parse()?;

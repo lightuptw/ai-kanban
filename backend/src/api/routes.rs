@@ -30,6 +30,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
     Router::new()
         .route("/health", get(handlers::health_check))
         .route("/health/live", get(handlers::liveness))
+        .route("/api/events", get(handlers::sse::sse_handler))
         .nest("/api/cards", card_routes)
         .layer(cors)
         .layer(TraceLayer::new_for_http())

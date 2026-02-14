@@ -1,4 +1,5 @@
 pub mod cards;
+pub mod sse;
 
 use axum::http::StatusCode;
 use axum::Json;
