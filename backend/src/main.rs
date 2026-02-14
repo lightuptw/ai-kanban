@@ -8,6 +8,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use kanban_backend::api::{create_router, AppState};
 use kanban_backend::config::Config;
 use kanban_backend::infrastructure::db;
+use kanban_backend::services::SseRelayService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,6 +42,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (sse_tx, _rx) = broadcast::channel::<String>(100);
     let http_client = reqwest::Client::new();
+
+    if let Some(pool) = db_pool.clone() {
+        let relay = SseRelayService {
+            opencode_url: config.opencode_url.clone(),
+            db: pool,
+            sse_tx: sse_tx.clone(),
+            http_client: http_client.clone(),
+        };
+
+        tokio::spawn(async move {
+            tracing::info!("SSE relay started");
+            relay.start().await;
+        });
+    } else {
+        tracing::warn!("SSE relay not started: database unavailable");
+    }
 
     let config = Arc::new(config);
 
