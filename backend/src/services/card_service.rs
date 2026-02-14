@@ -59,11 +59,7 @@ impl CardService {
         pool: &SqlitePool,
         id: &str,
     ) -> Result<CardResponse, KanbanError> {
-        let card: Card = sqlx::query_as("SELECT * FROM cards WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| KanbanError::NotFound(format!("Card not found: {}", id)))?;
+        let card = Self::get_card_model(pool, id).await?;
 
         let subtasks: Vec<Subtask> =
             sqlx::query_as("SELECT * FROM subtasks WHERE card_id = ? ORDER BY position ASC")
@@ -85,6 +81,16 @@ impl CardService {
                 .await?;
 
         Ok(CardResponse::from_card(card, subtasks, labels, comments))
+    }
+
+    pub async fn get_card_model(pool: &SqlitePool, id: &str) -> Result<Card, KanbanError> {
+        let card: Card = sqlx::query_as("SELECT * FROM cards WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| KanbanError::NotFound(format!("Card not found: {}", id)))?;
+
+        Ok(card)
     }
 
     pub async fn get_board(pool: &SqlitePool) -> Result<BoardResponse, KanbanError> {
@@ -296,6 +302,16 @@ impl CardService {
             .await?;
 
         Ok(subtask)
+    }
+
+    pub async fn get_subtasks(pool: &SqlitePool, card_id: &str) -> Result<Vec<Subtask>, KanbanError> {
+        let subtasks: Vec<Subtask> =
+            sqlx::query_as("SELECT * FROM subtasks WHERE card_id = ? ORDER BY position ASC")
+                .bind(card_id)
+                .fetch_all(pool)
+                .await?;
+
+        Ok(subtasks)
     }
 
     pub async fn update_subtask(

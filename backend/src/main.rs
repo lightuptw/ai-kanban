@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -41,7 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (sse_tx, _rx) = broadcast::channel::<String>(100);
     let http_client = reqwest::Client::new();
 
-    let state = AppState::new(db_pool, sse_tx, http_client);
+    let config = Arc::new(config);
+
+    let state = AppState::new(db_pool, sse_tx, http_client, Arc::clone(&config));
     let app = create_router(state, &config);
 
     let addr: SocketAddr = format!("0.0.0.0:{}", config.port).parse()?;

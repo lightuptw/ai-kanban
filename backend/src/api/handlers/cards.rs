@@ -5,9 +5,10 @@ use axum::{
 };
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
+use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::KanbanError;
-use crate::services::CardService;
+use crate::services::{AiDispatchService, CardService};
 
 pub async fn create_card(
     State(state): State<AppState>,
@@ -51,7 +52,36 @@ pub async fn move_card(
     Json(req): Json<MoveCardRequest>,
 ) -> Result<Json<CardResponse>, KanbanError> {
     let pool = state.require_db()?;
+    let previous_card = CardService::get_card_model(pool, &id).await?;
+    let target_stage = req.stage.clone();
     let card = CardService::move_card(pool, &id, req).await?;
+
+    if target_stage == "todo" && previous_card.stage != "todo" {
+        let card_model = CardService::get_card_model(pool, &id).await?;
+        let subtasks = CardService::get_subtasks(pool, &id).await?;
+
+        if let Err(e) =
+            AiDispatchService::new(state.http_client.clone(), state.config.opencode_url.clone())
+                .dispatch_card(&card_model, &subtasks, pool)
+                .await
+        {
+            tracing::warn!("AI dispatch failed for card {}: {}", id, e);
+        }
+
+        let updated_card = CardService::get_card_by_id(pool, &id).await?;
+
+        let event = SseEvent::AiStatusChanged {
+            card_id: id,
+            status: updated_card.ai_status.clone(),
+            progress: updated_card.ai_progress.clone(),
+        };
+        if let Ok(payload) = serde_json::to_string(&event) {
+            let _ = state.sse_tx.send(payload);
+        }
+
+        return Ok(Json(updated_card));
+    }
+
     Ok(Json(card))
 }
 
