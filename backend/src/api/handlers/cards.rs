@@ -11,7 +11,7 @@ use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRe
 use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, Stage};
-use crate::services::CardService;
+use crate::services::{AiDispatchService, CardService};
 
 #[derive(Debug, Deserialize)]
 pub struct BoardQuery {
@@ -310,7 +310,32 @@ pub async fn generate_plan(
         .await?;
 
     let prompt = format!(
-        "IMPORTANT: You are working on card_id = \"{}\". ALL subtasks must be created on THIS card. Do NOT create new cards.\n\nYou are a project planning assistant. Analyze this card and create a detailed implementation plan.\n\n## Card Details\n- Card ID: {}\n- Title: {}\n- Description: {}\n- Priority: {}\n- Working Directory: {}\n- Linked Documents:\n{}\n- Attached Files:\n{}\n- Current Subtasks:\n{}\n\n## Instructions\n1. Analyze the card requirements\n2. Break down the work into concrete, actionable subtasks organized by phases\n3. Use the `kanban_create_subtask` MCP tool to add each subtask to card_id \"{}\"\n4. Set appropriate phase names (e.g., \"Design\", \"Implementation\", \"Testing\") and phase_order for grouping\n5. If you create any plan documents or markdown files, update the card's linked_documents using `kanban_update_card`\n6. Add a summary comment using `kanban_add_comment`\n\nCRITICAL: The card_id for ALL tool calls is: {}",
+        "IMPORTANT: You are working on card_id = \"{}\". ALL subtasks must be created on THIS card. Do NOT create new cards.\n\n\
+## SAFETY RULES — MANDATORY\n\
+- ONLY use the provided kanban MCP tools: kanban_create_subtask, kanban_update_card, kanban_add_comment, kanban_get_card\n\
+- Do NOT search the filesystem for database files\n\
+- Do NOT create, open, or modify any .db or .sqlite files\n\
+- Do NOT use Python, sqlite3, shell commands, or any tool to access databases directly\n\
+- Do NOT attempt to fix MCP tool errors by accessing underlying infrastructure\n\
+- If a kanban MCP tool returns an error, STOP and report the error. Do NOT work around it.\n\n\
+You are a project planning assistant. Analyze this card and create a detailed implementation plan.\n\n\
+## Card Details\n\
+- Card ID: {}\n\
+- Title: {}\n\
+- Description: {}\n\
+- Priority: {}\n\
+- Working Directory: {}\n\
+- Linked Documents:\n{}\n\
+- Attached Files:\n{}\n\
+- Current Subtasks:\n{}\n\n\
+## Instructions\n\
+1. Analyze the card requirements\n\
+2. Break down the work into concrete, actionable subtasks organized by phases\n\
+3. Use the `kanban_create_subtask` MCP tool to add each subtask to card_id \"{}\"\n\
+4. Set appropriate phase names (e.g., \"Design\", \"Implementation\", \"Testing\") and phase_order for grouping\n\
+5. If you create any plan documents or markdown files, update the card's linked_documents using `kanban_update_card`\n\
+6. Add a summary comment using `kanban_add_comment`\n\n\
+CRITICAL: The card_id for ALL tool calls is: {}",
         card.id,
         card.id,
         card.title,
@@ -414,6 +439,56 @@ async fn handle_review_redispatch(
         .await?;
 
     Ok(())
+}
+
+pub async fn stop_ai(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    let session_id = card
+        .ai_session_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| KanbanError::Internal("No active AI session on this card".into()))?;
+
+    let active_statuses = ["planning", "dispatched", "working", "queued"];
+    if !active_statuses.contains(&card.ai_status.as_str()) {
+        return Err(KanbanError::Internal(format!(
+            "Card AI status is '{}', not active",
+            card.ai_status
+        )));
+    }
+
+    let dispatch = AiDispatchService::new(
+        state.http_client.clone(),
+        state.config.opencode_url.clone(),
+    );
+    if let Err(e) = dispatch.abort_session(session_id).await {
+        tracing::warn!(card_id = id.as_str(), error = %e, "Failed to abort opencode session, marking cancelled anyway");
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+        .bind("cancelled")
+        .bind(&now)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    let event = SseEvent::AiStatusChanged {
+        card_id: id.clone(),
+        status: "cancelled".to_string(),
+        progress: json!({}),
+        stage: card.stage.clone(),
+        ai_session_id: card.ai_session_id.clone(),
+    };
+    let _ = state.sse_tx.send(serde_json::to_string(&event).unwrap_or_default());
+
+    let updated = CardService::get_card_by_id(pool, &id).await?;
+    Ok(Json(updated))
 }
 
 pub async fn delete_card(

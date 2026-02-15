@@ -36,6 +36,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         )
         .route("/{id}/move", patch(handlers::cards::move_card))
         .route("/{id}/generate-plan", post(handlers::cards::generate_plan))
+        .route("/{id}/stop-ai", post(handlers::cards::stop_ai))
         .route("/{id}/subtasks", post(handlers::subtasks::create_subtask))
         .route(
             "/{id}/comments",

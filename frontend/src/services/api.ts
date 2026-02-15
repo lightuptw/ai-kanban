@@ -58,6 +58,9 @@ export const api = {
   generatePlan: (cardId: string) =>
     fetchAPI<Card>(`/api/cards/${cardId}/generate-plan`, { method: "POST" }),
 
+  stopAi: (cardId: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/stop-ai`, { method: "POST" }),
+
   updateCard: (id: string, data: UpdateCardRequest) =>
     fetchAPI<Card>(`/api/cards/${id}`, {
       method: "PATCH",

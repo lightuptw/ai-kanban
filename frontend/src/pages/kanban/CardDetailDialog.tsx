@@ -36,6 +36,7 @@ import {
   DragIndicator as DragIndicatorIcon,
   AttachFile as AttachFileIcon,
   CloudUpload as CloudUploadIcon,
+  StopCircle as StopCircleIcon,
 } from "@mui/icons-material";
 import {
   DndContext,
@@ -520,9 +521,18 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const handleGeneratePlan = async () => {
     try {
       await api.generatePlan(cardId);
-      // SSE AiStatusChanged event will update the card in-place via updateCardAiStatus
     } catch (err) {
       console.error("Failed to generate plan:", err);
+    }
+  };
+
+  const isAiActive = card?.ai_status && ["planning", "dispatched", "working", "queued"].includes(card.ai_status);
+
+  const handleStopAi = async () => {
+    try {
+      await api.stopAi(cardId);
+    } catch (err) {
+      console.error("Failed to stop AI:", err);
     }
   };
 
@@ -612,10 +622,21 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 color="primary"
                 startIcon={<AutoFixHighIcon />}
                 onClick={handleGeneratePlan}
-                disabled={card.ai_status === 'planning' || card.ai_status === 'working'}
+                disabled={!!isAiActive}
               >
                 {card.ai_status === 'planning' ? 'Generating...' : 'Generate Plan'}
               </Button>
+              {isAiActive && (
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<StopCircleIcon />}
+                  onClick={handleStopAi}
+                  size="small"
+                >
+                  Stop AI
+                </Button>
+              )}
               {card.ai_status === 'planning' && <CircularProgress size={20} />}
             </Box>
           </Section>
@@ -848,8 +869,30 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         {/* AI Status */}
         {card.ai_status && card.ai_status !== "idle" && (
           <Section>
-            <SectionTitle variant="subtitle1">AI Status</SectionTitle>
-            <Chip label={card.ai_status} color={card.ai_status === "completed" ? "success" : "primary"} sx={{ mb: 2 }} />
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+              <SectionTitle variant="subtitle1" sx={{ mb: 0 }}>AI Status</SectionTitle>
+              {isAiActive && (
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<StopCircleIcon />}
+                  onClick={handleStopAi}
+                  size="small"
+                >
+                  Stop AI
+                </Button>
+              )}
+            </Box>
+            <Chip
+              label={card.ai_status}
+              color={
+                card.ai_status === "completed" ? "success" :
+                card.ai_status === "cancelled" ? "default" :
+                card.ai_status === "failed" ? "error" :
+                "primary"
+              }
+              sx={{ mb: 2 }}
+            />
             {aiTotalTodos > 0 && (
               <>
                 <Typography variant="body2" gutterBottom>
