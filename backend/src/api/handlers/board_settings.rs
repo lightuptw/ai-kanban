@@ -23,6 +23,7 @@ pub struct BoardSettings {
     pub testing_requirements: String,
     pub api_conventions: String,
     pub infrastructure: String,
+    pub ai_concurrency: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -41,6 +42,7 @@ pub struct UpdateBoardSettingsRequest {
     pub testing_requirements: Option<String>,
     pub api_conventions: Option<String>,
     pub infrastructure: Option<String>,
+    pub ai_concurrency: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +62,7 @@ pub async fn get_board_settings(
     let pool = state.require_db()?;
 
     let settings: Option<BoardSettings> = sqlx::query_as(
-        "SELECT board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, created_at, updated_at FROM board_settings WHERE board_id = ?",
+        "SELECT board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, ai_concurrency, created_at, updated_at FROM board_settings WHERE board_id = ?",
     )
     .bind(&board_id)
     .fetch_optional(pool)
@@ -80,6 +82,7 @@ pub async fn get_board_settings(
         testing_requirements: String::new(),
         api_conventions: String::new(),
         infrastructure: String::new(),
+        ai_concurrency: 1,
         created_at: String::new(),
         updated_at: String::new(),
     })))
@@ -95,13 +98,13 @@ pub async fn update_board_settings(
 
     // Fetch existing settings to merge with partial update
     let existing: Option<BoardSettings> = sqlx::query_as(
-        "SELECT board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, created_at, updated_at FROM board_settings WHERE board_id = ?",
+        "SELECT board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, ai_concurrency, created_at, updated_at FROM board_settings WHERE board_id = ?",
     )
     .bind(&board_id)
     .fetch_optional(pool)
     .await?;
 
-    let (cb, gr, cm, dl, va, ts, cp, en, cc, tr, ac, inf) = match &existing {
+    let (cb, gr, cm, dl, va, ts, cp, en, cc, tr, ac, inf, aic) = match &existing {
         Some(e) => (
             req.codebase_path.unwrap_or_else(|| e.codebase_path.clone()),
             req.github_repo.unwrap_or_else(|| e.github_repo.clone()),
@@ -115,6 +118,7 @@ pub async fn update_board_settings(
             req.testing_requirements.unwrap_or_else(|| e.testing_requirements.clone()),
             req.api_conventions.unwrap_or_else(|| e.api_conventions.clone()),
             req.infrastructure.unwrap_or_else(|| e.infrastructure.clone()),
+            req.ai_concurrency.unwrap_or(e.ai_concurrency),
         ),
         None => (
             req.codebase_path.unwrap_or_default(),
@@ -129,12 +133,13 @@ pub async fn update_board_settings(
             req.testing_requirements.unwrap_or_default(),
             req.api_conventions.unwrap_or_default(),
             req.infrastructure.unwrap_or_default(),
+            req.ai_concurrency.unwrap_or(1),
         ),
     };
 
     let settings: BoardSettings = sqlx::query_as(
-        "INSERT INTO board_settings (board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO board_settings (board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, ai_concurrency, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(board_id) DO UPDATE SET
              codebase_path = excluded.codebase_path,
              github_repo = excluded.github_repo,
@@ -148,8 +153,9 @@ pub async fn update_board_settings(
              testing_requirements = excluded.testing_requirements,
              api_conventions = excluded.api_conventions,
              infrastructure = excluded.infrastructure,
+             ai_concurrency = excluded.ai_concurrency,
              updated_at = excluded.updated_at
-         RETURNING board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, created_at, updated_at",
+         RETURNING board_id, codebase_path, github_repo, context_markdown, document_links, variables, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, ai_concurrency, created_at, updated_at",
     )
     .bind(&board_id)
     .bind(&cb)
@@ -164,6 +170,7 @@ pub async fn update_board_settings(
     .bind(&tr)
     .bind(&ac)
     .bind(&inf)
+    .bind(aic)
     .bind(&now)
     .bind(&now)
     .fetch_one(pool)

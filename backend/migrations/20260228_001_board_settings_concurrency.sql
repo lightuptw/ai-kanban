@@ -1,0 +1,1 @@
+ALTER TABLE board_settings ADD COLUMN ai_concurrency INTEGER NOT NULL DEFAULT 1;

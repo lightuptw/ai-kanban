@@ -69,3 +69,17 @@ pub struct CardVersion {
     pub changed_by: String,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AiQuestion {
+    pub id: String,
+    pub card_id: String,
+    pub session_id: String,
+    pub question: String,
+    pub question_type: String,
+    pub options: String,
+    pub multiple: bool,
+    pub answer: Option<String>,
+    pub answered_at: Option<String>,
+    pub created_at: String,
+}

@@ -41,6 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::warn!("Failed to seed default user: {}", e);
             }
 
+            if let Err(e) = kanban_backend::auth::seed::seed_service_account(&pool).await {
+                tracing::warn!("Failed to seed service account: {}", e);
+            }
+
             Some(pool)
         }
         Err(e) => {
@@ -86,7 +90,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(db_pool, sse_tx, http_client, Arc::clone(&config));
 
     let mcp_service = StreamableHttpService::new(
-        move || Ok(KanbanMcp::new(mcp_pool.clone().expect("DB required for MCP"))),
+        move || {
+            Ok(KanbanMcp::new(
+                mcp_pool.clone().expect("DB required for MCP"),
+                None,
+            ))
+        },
         LocalSessionManager::default().into(),
         Default::default(),
     );
@@ -99,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Kanban Backend listening on http://{}", addr);
     tracing::info!("Health check: http://{}/health", addr);
 
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

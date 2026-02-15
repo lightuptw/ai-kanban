@@ -5,6 +5,7 @@ pub mod comments;
 pub mod files;
 pub mod labels;
 pub mod picker;
+pub mod questions;
 pub mod settings;
 pub mod sse;
 pub mod subtasks;

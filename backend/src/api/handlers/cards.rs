@@ -272,6 +272,14 @@ pub async fn generate_plan(
         Err(_) => "None".to_string(),
     };
 
+    // Wake up opencode server (it may be sleeping)
+    let _ = state
+        .http_client
+        .get(format!("{}/health", state.config.opencode_url))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+
     let session_response = state
         .http_client
         .post(format!("{}/session", state.config.opencode_url))
@@ -564,6 +572,180 @@ pub async fn stop_ai(
         progress: json!({}),
         stage: card.stage.clone(),
         ai_session_id: card.ai_session_id.clone(),
+    };
+    let _ = state.sse_tx.send(serde_json::to_string(&event).unwrap_or_default());
+
+    let updated = CardService::get_card_by_id(pool, &id).await?;
+    Ok(Json(updated))
+}
+
+pub async fn resume_ai(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    let valid_stages = ["plan", "todo", "in_progress"];
+    if !valid_stages.contains(&card.stage.as_str()) {
+        return Err(KanbanError::BadRequest(
+            "AI resume is only available for cards in plan, todo, or in_progress stage".into(),
+        ));
+    }
+
+    let active_statuses = ["planning", "dispatched", "working", "queued", "waiting_input"];
+    if active_statuses.contains(&card.ai_status.as_str()) {
+        return Err(KanbanError::BadRequest(format!(
+            "Card AI is already active with status '{}'",
+            card.ai_status
+        )));
+    }
+
+    if let Some(session_id) = card.ai_session_id.as_deref().filter(|s| !s.is_empty()) {
+        let _ = state
+            .http_client
+            .get(format!("{}/health", state.config.opencode_url))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+
+        let session_check_url = format!("{}/session/{}", state.config.opencode_url, session_id);
+        let session_exists = match state
+            .http_client
+            .get(&session_check_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => true,
+            Ok(response) => {
+                tracing::warn!(
+                    card_id = id.as_str(),
+                    session_id,
+                    status = %response.status(),
+                    "Stored AI session no longer available; falling back to fresh dispatch"
+                );
+                false
+            }
+            Err(err) => {
+                tracing::warn!(
+                    card_id = id.as_str(),
+                    session_id,
+                    error = %err,
+                    "Failed to verify existing AI session; falling back to fresh dispatch"
+                );
+                false
+            }
+        };
+
+        if session_exists {
+            let resumed_status = if card.stage == "plan" {
+                "planning"
+            } else {
+                "working"
+            };
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                .bind(resumed_status)
+                .bind(&now)
+                .bind(&id)
+                .execute(pool)
+                .await?;
+
+            let event = SseEvent::AiStatusChanged {
+                card_id: id.clone(),
+                status: resumed_status.to_string(),
+                progress: json!({}),
+                stage: card.stage.clone(),
+                ai_session_id: card.ai_session_id.clone(),
+            };
+            let _ = state.sse_tx.send(serde_json::to_string(&event).unwrap_or_default());
+
+            let prompt = if card.stage == "plan" {
+                "Continue planning this card. Review what subtasks already exist and create any remaining ones. Add a summary comment when done.".to_string()
+            } else {
+                "Continue where you left off. Review which subtasks are completed vs pending, then resume work on the remaining items.".to_string()
+            };
+
+            let http_client = state.http_client.clone();
+            let message_url = format!(
+                "{}/session/{}/message",
+                state.config.opencode_url,
+                session_id
+            );
+            let db_clone = pool.clone();
+            let card_id_clone = id.clone();
+
+            tokio::spawn(async move {
+                let result = http_client
+                    .post(&message_url)
+                    .json(&json!({"parts": [{"type": "text", "text": prompt}]}))
+                    .send()
+                    .await;
+
+                match result {
+                    Ok(response) if response.status().is_success() => {
+                        tracing::info!(card_id = card_id_clone.as_str(), "Resume message sent successfully");
+                    }
+                    Ok(response) => {
+                        tracing::warn!(
+                            card_id = card_id_clone.as_str(),
+                            status = %response.status(),
+                            "Resume message returned non-success"
+                        );
+                        let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                            .bind("failed")
+                            .bind(chrono::Utc::now().to_rfc3339())
+                            .bind(&card_id_clone)
+                            .execute(&db_clone)
+                            .await;
+                    }
+                    Err(err) => {
+                        tracing::warn!(card_id = card_id_clone.as_str(), error = %err, "Failed to send resume message");
+                        let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                            .bind("failed")
+                            .bind(chrono::Utc::now().to_rfc3339())
+                            .bind(&card_id_clone)
+                            .execute(&db_clone)
+                            .await;
+                    }
+                }
+            });
+
+            let updated = CardService::get_card_by_id(pool, &id).await?;
+            return Ok(Json(updated));
+        }
+    }
+
+    let (fallback_status, fallback_session_id) = if card.stage == "plan" {
+        tracing::info!(
+            card_id = id.as_str(),
+            "Resume fallback for plan card: resetting to idle with no session"
+        );
+        ("idle", None::<String>)
+    } else {
+        tracing::info!(
+            card_id = id.as_str(),
+            "Resume fallback for execution card: queueing with no session"
+        );
+        ("queued", None::<String>)
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE cards SET ai_session_id = ?, ai_status = ?, updated_at = ? WHERE id = ?")
+        .bind(fallback_session_id)
+        .bind(fallback_status)
+        .bind(&now)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    let event = SseEvent::AiStatusChanged {
+        card_id: id.clone(),
+        status: fallback_status.to_string(),
+        progress: json!({}),
+        stage: card.stage.clone(),
+        ai_session_id: None,
     };
     let _ = state.sse_tx.send(serde_json::to_string(&event).unwrap_or_default());
 

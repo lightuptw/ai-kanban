@@ -7,7 +7,11 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  FormControl,
   IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
   Snackbar,
   Tab,
   Tabs,
@@ -35,6 +39,7 @@ interface BoardSettingsDialogProps {
 type EditableBoardSettings = Required<UpdateBoardSettingsRequest>;
 
 const EMPTY_SETTINGS: EditableBoardSettings = {
+  ai_concurrency: "1",
   codebase_path: "",
   github_repo: "",
   context_markdown: "",
@@ -50,6 +55,10 @@ const EMPTY_SETTINGS: EditableBoardSettings = {
 };
 
 const toEditableSettings = (settings: BoardSettings): EditableBoardSettings => ({
+  ai_concurrency:
+    typeof settings.ai_concurrency === "number" && settings.ai_concurrency >= 0 && settings.ai_concurrency <= 10
+      ? String(settings.ai_concurrency)
+      : "1",
   codebase_path: settings.codebase_path || "",
   github_repo: settings.github_repo || "",
   context_markdown: settings.context_markdown || "",
@@ -259,6 +268,37 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
 
               {tab === 0 && (
                 <Box sx={{ display: "grid", gap: 2 }}>
+                  <Box>
+                    <FieldLabel
+                      label="AI Concurrency"
+                      tooltip="How many AI jobs can run in parallel on this board. Higher values increase throughput but may hit API rate limits."
+                    />
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <FormControl size="small" sx={{ minWidth: 220 }}>
+                        <InputLabel id="ai-concurrency-label">AI Concurrency</InputLabel>
+                        <Select
+                          labelId="ai-concurrency-label"
+                          label="AI Concurrency"
+                          value={settings.ai_concurrency}
+                          onChange={(event) => updateField("ai_concurrency", event.target.value)}
+                        >
+                          {Array.from({ length: 10 }, (_, index) => {
+                            const value = String(index + 1);
+                            return (
+                              <MenuItem key={value} value={value}>
+                                {value}
+                              </MenuItem>
+                            );
+                          })}
+                          <MenuItem value="0">Unlimited</MenuItem>
+                        </Select>
+                      </FormControl>
+                      <Tooltip title="Unlimited can trigger API rate limits quickly. Prefer 1-3 unless you have high quotas." arrow>
+                        <HelpOutlineIcon sx={{ fontSize: 18, color: "warning.main", cursor: "help" }} />
+                      </Tooltip>
+                    </Box>
+                  </Box>
+
                   <Box>
                     <FieldLabel
                       label="Codebase Path"

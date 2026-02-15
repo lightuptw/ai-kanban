@@ -26,24 +26,15 @@ import {
   Typography as MuiTypography,
 } from "@mui/material";
 import { spacing } from "@mui/system";
-import { orange, green, blue, grey, purple } from "@mui/material/colors";
 import { Column } from "./Column";
 import { KanbanCard } from "./KanbanCard";
 import { AppDispatch, RootState } from "../../redux/store";
 import { fetchBoard, fetchBoards, optimisticMoveCard, revertMoveCard, moveCard, setSelectedCard, createCard } from "../../store/slices/kanbanSlice";
 import { CardDetailDialog } from "./CardDetailDialog";
 import type { Stage } from "../../types/kanban";
+import { STAGE_COLORS } from "../../constants/stageColors";
 
 const Typography = styled(MuiTypography)(spacing);
-
-const STAGE_COLORS = {
-  backlog: grey[500],
-  plan: blue[500],
-  todo: orange[500],
-  in_progress: "#376fd0",
-  review: purple[500],
-  done: green[500],
-};
 
 interface CardItem {
   id: string;

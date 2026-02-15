@@ -44,8 +44,8 @@ function App({ emotionCache = clientSideEmotionCache }) {
     <CacheProvider value={emotionCache}>
       <HelmetProvider>
         <Helmet
-          titleTemplate="%s | Kanban Board"
-          defaultTitle="Kanban Board"
+titleTemplate="%s | LightUp AI Kanban"
+        defaultTitle="LightUp AI Kanban"
         />
         <Provider store={store}>
           <LocalizationProvider dateAdapter={AdapterDateFns}>

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import styled from "@emotion/styled";
+import { keyframes } from "@emotion/react";
 import { NavLink } from "react-router-dom";
 import { useSelector, useDispatch } from "react-redux";
 import {
@@ -24,6 +25,7 @@ import { green } from "@mui/material/colors";
 
 import {
   Box,
+  Avatar,
   Chip,
   Drawer as MuiDrawer,
   ListItemButton,
@@ -47,6 +49,7 @@ import { RootState, AppDispatch } from "../../redux/store";
 import { setActiveBoard, createBoard, reorderBoard, optimisticReorderBoards } from "../../store/slices/kanbanSlice";
 import type { Board } from "../../types/kanban";
 import BoardSettingsDialog from "../../pages/kanban/BoardSettingsDialog";
+import { getUser } from "../../services/auth";
 
 const Drawer = styled(MuiDrawer)`
   border-right: 0;
@@ -156,13 +159,56 @@ const BoardItem = styled(ListItemButton, {
 interface SortableBoardItemProps {
   board: Board;
   isActive: boolean;
+  activeSessionCount?: number;
+  activeUserInitial?: string;
   onSelect: () => void;
   onSettings?: (board: Board) => void;
 }
 
+const sidebarLarsonSweep = keyframes`
+  0%, 100% { left: 0; }
+  50% { left: calc(100% - 12px); }
+`;
+
+const BoardNameWrap = styled.div`
+  display: grid;
+  gap: 2px;
+`;
+
+const BoardNameRow = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+`;
+
+const BoardLarsonTrack = styled.div`
+  position: relative;
+  height: 2px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 12px;
+    height: 100%;
+    border-radius: 999px;
+    background: #36c06a;
+    box-shadow: 0 0 8px rgba(54, 192, 106, 0.75);
+    animation: ${sidebarLarsonSweep} 1.5s ease-in-out infinite;
+  }
+`;
+
 const SortableBoardItem: React.FC<SortableBoardItemProps> = ({
   board,
   isActive,
+  activeSessionCount = 0,
+  activeUserInitial,
   onSelect,
   onSettings,
 }) => {
@@ -181,7 +227,31 @@ const SortableBoardItem: React.FC<SortableBoardItemProps> = ({
         </Box>
         <DashboardIcon />
         <ListItemText
-          primary={board.name}
+          primary={
+            <BoardNameWrap>
+              <BoardNameRow>
+                <Typography component="span" sx={{ fontSize: "0.875rem" }} noWrap>
+                  {board.name}
+                  {activeSessionCount > 0 ? ` (${activeSessionCount})` : ""}
+                </Typography>
+                {isActive && activeUserInitial && (
+                  <Avatar
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      fontSize: "0.75rem",
+                      fontWeight: 700,
+                      bgcolor: "rgba(255,255,255,0.16)",
+                      color: "rgba(255,255,255,0.92)",
+                    }}
+                  >
+                    {activeUserInitial}
+                  </Avatar>
+                )}
+              </BoardNameRow>
+              {activeSessionCount > 0 && <BoardLarsonTrack />}
+            </BoardNameWrap>
+          }
           primaryTypographyProps={{ fontSize: "0.875rem", noWrap: true }}
         />
         <IconButton
@@ -243,10 +313,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   ...rest
 }) => {
   const dispatch = useDispatch<AppDispatch>();
-  const { boards, activeBoardId } = useSelector((state: RootState) => state.kanban);
+  const { boards, activeBoardId, columns } = useSelector((state: RootState) => state.kanban);
   const [addingBoard, setAddingBoard] = useState(false);
   const [newBoardName, setNewBoardName] = useState("");
   const [settingsBoard, setSettingsBoard] = useState<Board | null>(null);
+
+  const activeSessionCount = (Object.values(columns).flat() || []).filter((card) =>
+    card.ai_status === "dispatched" || card.ai_status === "working" || card.ai_status === "planning"
+  ).length;
+
+  const userInitial = (getUser()?.username?.trim().charAt(0) || "").toUpperCase();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -297,7 +373,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       <Brand component={NavLink as any} to="/">
         <BrandIcon src={lightupLogo} alt="LightUp" />{" "}
         <Box ml={1}>
-          LightUp <BrandChip label="PRO" />
+          LightUp <BrandChip label="dev" />
         </Box>
       </Brand>
       <BoardList>
@@ -310,6 +386,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                   key={board.id}
                   board={board}
                   isActive={board.id === activeBoardId}
+                  activeSessionCount={board.id === activeBoardId ? activeSessionCount : 0}
+                  activeUserInitial={board.id === activeBoardId ? userInitial : ""}
                   onSelect={() => dispatch(setActiveBoard(board.id))}
                   onSettings={(selectedBoard) => setSettingsBoard(selectedBoard)}
                 />

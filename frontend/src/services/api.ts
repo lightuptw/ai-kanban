@@ -20,6 +20,19 @@ import type {
   UpdateBoardSettingsRequest,
 } from "../types/kanban";
 
+interface AiQuestion {
+  id: string;
+  card_id: string;
+  session_id: string;
+  question: string;
+  question_type: string;
+  options: string;
+  multiple: boolean;
+  answer: string | null;
+  answered_at: string | null;
+  created_at: string;
+}
+
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   `${window.location.protocol}//${window.location.hostname}:21547`;
@@ -90,6 +103,18 @@ export const api = {
 
   stopAi: (cardId: string) =>
     fetchAPI<Card>(`/api/cards/${cardId}/stop-ai`, { method: "POST" }),
+
+  resumeAi: (cardId: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/resume-ai`, { method: "POST" }),
+
+  getCardQuestions: (cardId: string) =>
+    fetchAPI<AiQuestion[]>(`/api/cards/${cardId}/questions`),
+
+  answerQuestion: (cardId: string, questionId: string, answer: string | string[]) =>
+    fetchAPI<AiQuestion>(`/api/cards/${cardId}/questions/${questionId}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ answer }),
+    }),
 
   updateCard: (id: string, data: UpdateCardRequest) =>
     fetchAPI<Card>(`/api/cards/${id}`, {

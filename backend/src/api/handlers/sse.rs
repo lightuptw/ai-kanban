@@ -22,6 +22,8 @@ pub enum SseEvent {
     SubtaskToggled { card_id: String, subtask_id: String, completed: bool },
     AiStatusChanged { card_id: String, status: String, progress: serde_json::Value, stage: String, ai_session_id: Option<String> },
     AgentLogCreated { card_id: String, log: AgentLog },
+    QuestionCreated { card_id: String, question: serde_json::Value },
+    QuestionAnswered { card_id: String, question: serde_json::Value },
 }
 
 pub async fn sse_handler(

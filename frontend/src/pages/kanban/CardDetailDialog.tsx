@@ -15,6 +15,7 @@ import {
   ListItem,
   ListItemText,
   Checkbox,
+  Radio,
   Select,
   MenuItem,
   FormControl,
@@ -39,6 +40,8 @@ import {
   AttachFile as AttachFileIcon,
   CloudUpload as CloudUploadIcon,
   StopCircle as StopCircleIcon,
+  HelpOutline as HelpOutlineIcon,
+  PlayArrow as PlayArrowIcon,
 } from "@mui/icons-material";
 import {
   DndContext,
@@ -59,8 +62,9 @@ import type { CardVersion } from "../../types/kanban";
 import { updateCard, deleteCard, fetchBoard } from "../../store/slices/kanbanSlice";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { api } from "../../services/api";
+import { STAGE_COLORS } from "../../constants/stageColors";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
+const API_BASE_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:21547`;
 
 const DialogHeader = styled(DialogTitle)`
   display: flex;
@@ -83,7 +87,11 @@ const miniLarsonSweep = keyframes`
   50% { left: calc(100% - 16px); }
 `;
 
-const MiniLarsonScanner = styled.div`
+interface MiniLarsonScannerProps {
+  scannerColor?: string;
+}
+
+const MiniLarsonScanner = styled.div<MiniLarsonScannerProps>`
   position: absolute;
   bottom: 0;
   left: 0;
@@ -96,9 +104,9 @@ const MiniLarsonScanner = styled.div`
     position: absolute;
     width: 16px;
     height: 100%;
-    background: #ff3300;
+    background: ${(props) => props.scannerColor || "#ff3300"};
     border-radius: 50%;
-    box-shadow: 0 0 4px 2px rgba(255, 51, 0, 0.6), 0 0 8px 4px rgba(255, 51, 0, 0.3);
+    box-shadow: 0 0 4px 2px ${(props) => `${props.scannerColor || "#ff3300"}99`}, 0 0 8px 4px ${(props) => `${props.scannerColor || "#ff3300"}4D`};
     animation: ${miniLarsonSweep} 2s ease-in-out infinite;
   }
 `;
@@ -121,6 +129,24 @@ interface SubtaskItem {
   position: number;
   phase: string;
   phase_order: number;
+}
+
+interface AiQuestionOption {
+  label: string;
+  description: string;
+}
+
+interface AiQuestion {
+  id: string;
+  card_id: string;
+  session_id: string;
+  question: string;
+  question_type: string;
+  options: string;
+  multiple: boolean;
+  answer: string | null;
+  answered_at: string | null;
+  created_at: string;
 }
 
 interface CardSnapshot {
@@ -221,6 +247,10 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const [versions, setVersions] = useState<CardVersion[]>([]);
   const [showVersions, setShowVersions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<AiQuestion[]>([]);
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({});
+  const [textAnswers, setTextAnswers] = useState<Record<string, string>>({});
+  const [submittingQuestion, setSubmittingQuestion] = useState<string | null>(null);
   const loadedCardRef = useRef<{ title: string; description: string; working_directory: string; linked_documents: string; ai_agent: string } | null>(null);
 
   useEffect(() => {
@@ -233,6 +263,9 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
       setAiAgent(card.ai_agent || "");
       setWorkingDir(card.working_directory || ".");
       setLinkedDocs(card.linked_documents || "");
+      setSelectedAnswers({});
+      setTextAnswers({});
+      setSubmittingQuestion(null);
       loadedCardRef.current = {
         title: card.title,
         description: card.description || "",
@@ -257,6 +290,11 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           setSubtasks(data.subtasks || []);
         })
         .catch((err) => console.error("Failed to fetch card details:", err));
+
+      api
+        .getCardQuestions(card.id)
+        .then(setQuestions)
+        .catch((err) => console.error("Failed to fetch card questions:", err));
     }
   }, [card?.id]);
 
@@ -565,7 +603,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
      }
    };
 
-  const isAiActive = card?.ai_status && ["planning", "dispatched", "working", "queued"].includes(card.ai_status);
+  const isAiActive = card?.ai_status && ["planning", "dispatched", "working", "queued", "waiting_input"].includes(card.ai_status);
 
    const handleStopAi = async () => {
      try {
@@ -575,6 +613,17 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
        setErrorMessage("Failed to stop AI.");
      }
    };
+
+   const handleResumeAi = async () => {
+     try {
+       await api.resumeAi(cardId);
+     } catch (err) {
+       console.error("Failed to resume AI:", err);
+       setErrorMessage("Failed to resume AI. Is opencode running?");
+     }
+   };
+
+  const isAiResumable = card && !isAiActive && ["plan", "todo", "in_progress"].includes(card.stage) && card.ai_status && ["idle", "cancelled", "failed", "completed"].includes(card.ai_status) && card.ai_status !== "idle";
 
   if (!card) return null;
 
@@ -587,6 +636,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const aiCompletedTodos = (aiProgress && aiProgress.completed_todos) || 0;
   const aiTotalTodos = (aiProgress && aiProgress.total_todos) || 0;
   const aiProgressPercent = aiTotalTodos > 0 ? (aiCompletedTodos / aiTotalTodos) * 100 : 0;
+  const unansweredQuestions = questions.filter((q) => !q.answer);
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth={false} PaperProps={{ sx: { width: '80vw', maxWidth: '80vw' } }}>
@@ -675,8 +725,156 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                   Stop AI
                 </Button>
               )}
+              {isAiResumable && (
+                <Button
+                  variant="contained"
+                  color="success"
+                  startIcon={<PlayArrowIcon />}
+                  onClick={handleResumeAi}
+                  size="small"
+                >
+                  Resume AI
+                </Button>
+              )}
               {card.ai_status === 'planning' && <CircularProgress size={20} />}
             </Box>
+          </Section>
+        )}
+
+        {unansweredQuestions.length > 0 && (
+          <Section>
+            <SectionTitle variant="subtitle1">AI Questions</SectionTitle>
+            {unansweredQuestions.map((q) => {
+              let options: AiQuestionOption[] = [];
+              try {
+                options = JSON.parse(q.options || "[]") as AiQuestionOption[];
+              } catch {
+                options = [];
+              }
+
+              const isMulti = q.question_type === "multi_select";
+              const isText = q.question_type === "text";
+              const selected = selectedAnswers[q.id] || [];
+
+              return (
+                <Paper
+                  key={q.id}
+                  elevation={3}
+                  sx={{
+                    p: 3,
+                    mb: 2,
+                    border: "2px solid",
+                    borderColor: "warning.main",
+                    bgcolor: "warning.light",
+                    opacity: 0.95,
+                  }}
+                >
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+                    <HelpOutlineIcon color="warning" />
+                    <Typography variant="subtitle1" fontWeight={600}>
+                      AI needs your input
+                    </Typography>
+                  </Box>
+                  <Typography variant="body1" sx={{ mb: 2 }}>
+                    {q.question}
+                  </Typography>
+
+                  {isText ? (
+                    <TextField
+                      fullWidth
+                      multiline
+                      rows={3}
+                      value={textAnswers[q.id] || ""}
+                      onChange={(event) =>
+                        setTextAnswers((prev) => ({ ...prev, [q.id]: event.target.value }))
+                      }
+                      placeholder="Type your answer..."
+                      sx={{ mb: 2 }}
+                    />
+                  ) : (
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 2 }}>
+                      {options.map((opt) => (
+                        <Paper
+                          key={opt.label}
+                          variant="outlined"
+                          sx={{
+                            p: 1.5,
+                            cursor: "pointer",
+                            border: "2px solid",
+                            borderColor: selected.includes(opt.label) ? "primary.main" : "divider",
+                            bgcolor: selected.includes(opt.label) ? "primary.light" : "background.paper",
+                            "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
+                            transition: "all 0.15s",
+                          }}
+                          onClick={() => {
+                            setSelectedAnswers((prev) => {
+                              const current = prev[q.id] || [];
+                              if (isMulti) {
+                                const next = current.includes(opt.label)
+                                  ? current.filter((label) => label !== opt.label)
+                                  : [...current, opt.label];
+                                return { ...prev, [q.id]: next };
+                              }
+                              return { ...prev, [q.id]: [opt.label] };
+                            });
+                          }}
+                        >
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            {isMulti ? (
+                              <Checkbox checked={selected.includes(opt.label)} size="small" />
+                            ) : (
+                              <Radio checked={selected.includes(opt.label)} size="small" />
+                            )}
+                            <Box>
+                              <Typography variant="body2" fontWeight={500}>
+                                {opt.label}
+                              </Typography>
+                              {opt.description && (
+                                <Typography variant="caption" color="text.secondary">
+                                  {opt.description}
+                                </Typography>
+                              )}
+                            </Box>
+                          </Box>
+                        </Paper>
+                      ))}
+                    </Box>
+                  )}
+
+                  <Button
+                    variant="contained"
+                    disabled={
+                      submittingQuestion === q.id ||
+                      (isText ? !(textAnswers[q.id] || "").trim() : selected.length === 0)
+                    }
+                    onClick={async () => {
+                      setSubmittingQuestion(q.id);
+                      try {
+                        const answer = isText ? (textAnswers[q.id] || "") : selected;
+                        await api.answerQuestion(card.id, q.id, answer);
+                        setQuestions((prev) =>
+                          prev.map((pq) =>
+                            pq.id === q.id
+                              ? {
+                                  ...pq,
+                                  answer: JSON.stringify(answer),
+                                  answered_at: new Date().toISOString(),
+                                }
+                              : pq
+                          )
+                        );
+                      } catch (err) {
+                        console.error("Failed to submit answer:", err);
+                      } finally {
+                        setSubmittingQuestion(null);
+                      }
+                    }}
+                  >
+                    {submittingQuestion === q.id ? <CircularProgress size={20} /> : "Submit Answer"}
+                  </Button>
+                </Paper>
+              );
+            })}
           </Section>
         )}
 
@@ -759,8 +957,14 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                   />
                   <Button variant="outlined" size="small" onClick={() => handleAddSubtask(phase.name, phase.order)}>+</Button>
                 </Box>
-                {(card.ai_status === "planning" || card.ai_status === "working") && (
-                  <MiniLarsonScanner />
+                {(card.ai_status === "planning" || card.ai_status === "working" || card.ai_status === "waiting_input") && (
+                  <MiniLarsonScanner
+                    scannerColor={
+                      card.ai_status === "waiting_input"
+                        ? "#ff3300"
+                        : STAGE_COLORS[card.stage as keyof typeof STAGE_COLORS] || "#376fd0"
+                    }
+                  />
                 )}
               </Paper>
             );
@@ -909,22 +1113,36 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           <Section>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
               <SectionTitle variant="subtitle1" sx={{ mb: 0 }}>AI Status</SectionTitle>
-              {isAiActive && (
-                <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<StopCircleIcon />}
-                  onClick={handleStopAi}
-                  size="small"
-                >
-                  Stop AI
-                </Button>
-              )}
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {isAiActive && (
+                  <Button
+                    variant="contained"
+                    color="error"
+                    startIcon={<StopCircleIcon />}
+                    onClick={handleStopAi}
+                    size="small"
+                  >
+                    Stop AI
+                  </Button>
+                )}
+                {isAiResumable && (
+                  <Button
+                    variant="contained"
+                    color="success"
+                    startIcon={<PlayArrowIcon />}
+                    onClick={handleResumeAi}
+                    size="small"
+                  >
+                    Resume AI
+                  </Button>
+                )}
+              </Box>
             </Box>
             <Chip
               label={card.ai_status}
               color={
                 card.ai_status === "completed" ? "success" :
+                card.ai_status === "waiting_input" ? "warning" :
                 card.ai_status === "cancelled" ? "default" :
                 card.ai_status === "failed" ? "error" :
                 "primary"

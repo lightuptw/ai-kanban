@@ -30,36 +30,42 @@ impl QueueProcessor {
     async fn process_queue(&self) -> Result<(), KanbanError> {
         self.recover_stuck_cards().await?;
 
-        let concurrency_limit = self.get_concurrency_limit().await;
-        let active_count = self.count_active_cards().await?;
+        let queued_board_ids = self.get_queued_board_ids().await?;
 
-        if active_count >= concurrency_limit {
-            return Ok(());
-        }
+        for board_id in queued_board_ids {
+            let concurrency_limit = self.get_board_concurrency_limit(&board_id).await;
+            let active_count = self.count_active_cards(&board_id).await?;
 
-        let slots = concurrency_limit - active_count;
-        let queued_cards = self.get_queued_cards(slots as i64).await?;
+            if active_count >= concurrency_limit {
+                continue;
+            }
 
-        for card in queued_cards {
-            let subtasks = CardService::get_subtasks(&self.db, &card.id).await?;
-            let dispatcher =
-                AiDispatchService::new(self.http_client.clone(), self.opencode_url.clone());
+            let slots = concurrency_limit.saturating_sub(active_count);
+            let queued_cards = self
+                .get_queued_cards(&board_id, std::cmp::min(slots, i64::MAX as usize) as i64)
+                .await?;
 
-            match dispatcher.dispatch_card(&card, &subtasks, &self.db).await {
-                Ok(_) => {
-                    let event = SseEvent::AiStatusChanged {
-                        card_id: card.id.clone(),
-                        status: "dispatched".to_string(),
-                        progress: json!({}),
-                        stage: card.stage.clone(),
-                        ai_session_id: card.ai_session_id.clone(),
-                    };
-                    if let Ok(payload) = serde_json::to_string(&event) {
-                        let _ = self.sse_tx.send(payload);
+            for card in queued_cards {
+                let subtasks = CardService::get_subtasks(&self.db, &card.id).await?;
+                let dispatcher =
+                    AiDispatchService::new(self.http_client.clone(), self.opencode_url.clone());
+
+                match dispatcher.dispatch_card(&card, &subtasks, &self.db).await {
+                    Ok(_) => {
+                        let event = SseEvent::AiStatusChanged {
+                            card_id: card.id.clone(),
+                            status: "dispatched".to_string(),
+                            progress: json!({}),
+                            stage: card.stage.clone(),
+                            ai_session_id: card.ai_session_id.clone(),
+                        };
+                        if let Ok(payload) = serde_json::to_string(&event) {
+                            let _ = self.sse_tx.send(payload);
+                        }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(card_id = card.id, "Queue dispatch failed: {}", e);
+                    Err(e) => {
+                        tracing::warn!(card_id = card.id, "Queue dispatch failed: {}", e);
+                    }
                 }
             }
         }
@@ -212,31 +218,50 @@ impl QueueProcessor {
         Ok(())
     }
 
-    async fn get_concurrency_limit(&self) -> usize {
-        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'ai_concurrency'")
+    async fn get_board_concurrency_limit(&self, board_id: &str) -> usize {
+        let concurrency = sqlx::query_scalar::<_, i64>(
+            "SELECT ai_concurrency FROM board_settings WHERE board_id = ?",
+        )
+        .bind(board_id)
             .fetch_optional(&self.db)
             .await
             .ok()
             .flatten()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(1)
-            .max(1)
+            .unwrap_or(1);
+
+        if concurrency == 0 {
+            usize::MAX
+        } else {
+            concurrency.max(1) as usize
+        }
     }
 
-    async fn count_active_cards(&self) -> Result<usize, KanbanError> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM cards WHERE stage IN ('todo', 'in_progress') AND ai_status IN ('dispatched', 'working')",
+    async fn get_queued_board_ids(&self) -> Result<Vec<String>, KanbanError> {
+        let board_ids = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT board_id FROM cards WHERE stage = 'todo' AND ai_status = 'queued'",
         )
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(board_ids)
+    }
+
+    async fn count_active_cards(&self, board_id: &str) -> Result<usize, KanbanError> {
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM cards WHERE board_id = ? AND stage IN ('todo', 'in_progress') AND ai_status IN ('dispatched', 'working')",
+        )
+        .bind(board_id)
         .fetch_one(&self.db)
         .await?;
 
         Ok(count.0 as usize)
     }
 
-    async fn get_queued_cards(&self, limit: i64) -> Result<Vec<Card>, KanbanError> {
+    async fn get_queued_cards(&self, board_id: &str, limit: i64) -> Result<Vec<Card>, KanbanError> {
         let cards = sqlx::query_as::<_, Card>(
-            "SELECT * FROM cards WHERE stage = 'todo' AND ai_status = 'queued' ORDER BY updated_at ASC LIMIT ?",
+            "SELECT * FROM cards WHERE board_id = ? AND stage = 'todo' AND ai_status = 'queued' ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END ASC, updated_at ASC LIMIT ?",
         )
+        .bind(board_id)
         .bind(limit)
         .fetch_all(&self.db)
         .await?;

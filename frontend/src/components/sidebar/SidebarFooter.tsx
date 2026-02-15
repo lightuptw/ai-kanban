@@ -55,7 +55,7 @@ const SidebarFooter: React.FC = ({ ...rest }) => {
         </Grid>
         <Grid item>
           <FooterText variant="body2">User</FooterText>
-          <FooterSubText variant="caption">Kanban Board</FooterSubText>
+          <FooterSubText variant="caption">LightUp AI Kanban</FooterSubText>
         </Grid>
       </Grid>
     </Footer>

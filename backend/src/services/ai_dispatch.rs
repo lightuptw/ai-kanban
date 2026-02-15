@@ -41,6 +41,14 @@ impl AiDispatchService {
         let plan_path = PlanGenerator::write_plan_file(&card.working_directory, &card.title, &plan_content)
             .map_err(KanbanError::OpenCodeError)?;
 
+        // Wake up opencode server (it may be sleeping)
+        let _ = self
+            .http_client
+            .get(format!("{}/health", self.opencode_url))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+
         let session_response = match self
             .http_client
             .post(format!("{}/session", self.opencode_url))

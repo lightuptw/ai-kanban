@@ -38,6 +38,11 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         .route("/{id}/move", patch(handlers::cards::move_card))
         .route("/{id}/generate-plan", post(handlers::cards::generate_plan))
         .route("/{id}/stop-ai", post(handlers::cards::stop_ai))
+        .route("/{id}/resume-ai", post(handlers::cards::resume_ai))
+        .route(
+            "/{id}/questions/{question_id}/answer",
+            post(handlers::questions::answer_question),
+        )
         .route("/{id}/subtasks", post(handlers::subtasks::create_subtask))
         .route(
             "/{id}/comments",
@@ -90,6 +95,10 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
     let public_routes = Router::new()
         .route("/health", get(handlers::health_check))
         .route("/health/live", get(handlers::liveness))
+        .route(
+            "/api/cards/{id}/questions",
+            get(handlers::questions::get_questions).post(handlers::questions::create_question),
+        )
         .route("/api/auth/register", post(auth::handlers::register))
         .route("/api/auth/login", post(auth::handlers::login))
         .route("/api/auth/refresh", post(auth::handlers::refresh));

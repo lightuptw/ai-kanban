@@ -95,6 +95,16 @@ export class SSEManager {
         }
         break;
 
+      case "QuestionCreated":
+      case "QuestionAnswered":
+        if (event.card_id) {
+          this.dispatch(updateCardAiStatus({
+            cardId: event.card_id,
+            status: event.ai_status || (event.type === "QuestionCreated" ? "waiting_input" : "working"),
+          }));
+        }
+        break;
+
       default:
         console.log("[SSE] Unknown event type:", event.type || event.event);
     }

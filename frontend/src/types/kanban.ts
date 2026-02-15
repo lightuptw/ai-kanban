@@ -133,6 +133,7 @@ export interface CardVersion {
 
 export interface BoardSettings {
   board_id: string;
+  ai_concurrency: number;
   codebase_path: string;
   github_repo: string;
   context_markdown: string;
@@ -150,6 +151,7 @@ export interface BoardSettings {
 }
 
 export interface UpdateBoardSettingsRequest {
+  ai_concurrency?: string;
   codebase_path?: string;
   github_repo?: string;
   context_markdown?: string;

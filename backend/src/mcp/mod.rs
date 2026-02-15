@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     handler::server::tool::ToolRouter,
@@ -13,6 +15,7 @@ use serde_json::json;
 pub struct KanbanMcp {
     client: reqwest::Client,
     base_url: String,
+    service_key: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -34,7 +37,7 @@ impl IntoKanbanApiUrl for &str {
 
 impl IntoKanbanApiUrl for sqlx::SqlitePool {
     fn into_kanban_api_url(self) -> String {
-        std::env::var("KANBAN_API_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string())
+        std::env::var("KANBAN_API_URL").unwrap_or_else(|_| "http://127.0.0.1:21547".to_string())
     }
 }
 
@@ -151,12 +154,39 @@ struct UpdateBoardSettingsInput {
     infrastructure: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+struct AskQuestionInput {
+    /// The card ID this question belongs to
+    card_id: String,
+    /// The question text to ask the user
+    question: String,
+    /// Question type: "select", "multi_select", or "text"
+    #[serde(default = "default_select")]
+    question_type: String,
+    /// JSON array of options: [{"label": "...", "description": "..."}]
+    #[serde(default = "default_empty_array")]
+    options: String,
+    /// Allow multiple selections (for multi_select type)
+    #[serde(default)]
+    multiple: bool,
+}
+
+fn default_select() -> String {
+    "select".to_string()
+}
+
+fn default_empty_array() -> String {
+    "[]".to_string()
+}
+
 #[tool_router]
 impl KanbanMcp {
-    pub fn new<T: IntoKanbanApiUrl>(base_url: T) -> Self {
+    pub fn new<T: IntoKanbanApiUrl>(base_url: T, service_key: Option<String>) -> Self {
+        let service_key = resolve_service_key(service_key);
         Self {
             client: reqwest::Client::new(),
             base_url: base_url.into_kanban_api_url(),
+            service_key,
             tool_router: Self::tool_router(),
         }
     }
@@ -171,11 +201,18 @@ impl KanbanMcp {
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 
+    fn with_service_key(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(key) = &self.service_key {
+            req.header("X-Service-Key", key)
+        } else {
+            req
+        }
+    }
+
     async fn get(&self, path: &str) -> Result<serde_json::Value, McpError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .client
-            .get(&url)
+            .with_service_key(self.client.get(&url))
             .send()
             .await
             .map_err(|e| Self::api_err(format!("HTTP GET {}: {}", path, e)))?;
@@ -199,8 +236,7 @@ impl KanbanMcp {
     ) -> Result<serde_json::Value, McpError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .client
-            .post(&url)
+            .with_service_key(self.client.post(&url))
             .json(body)
             .send()
             .await
@@ -225,8 +261,7 @@ impl KanbanMcp {
     ) -> Result<serde_json::Value, McpError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .client
-            .patch(&url)
+            .with_service_key(self.client.patch(&url))
             .json(body)
             .send()
             .await
@@ -251,8 +286,7 @@ impl KanbanMcp {
     ) -> Result<serde_json::Value, McpError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .client
-            .put(&url)
+            .with_service_key(self.client.put(&url))
             .json(body)
             .send()
             .await
@@ -273,8 +307,7 @@ impl KanbanMcp {
     async fn delete(&self, path: &str) -> Result<serde_json::Value, McpError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .client
-            .delete(&url)
+            .with_service_key(self.client.delete(&url))
             .send()
             .await
             .map_err(|e| Self::api_err(format!("HTTP DELETE {}: {}", path, e)))?;
@@ -610,6 +643,61 @@ impl KanbanMcp {
             .await?;
         Self::json_result(&data)
     }
+
+    #[tool(
+        description = "Ask the user a question and wait for their answer. Use this when you need user input before proceeding. For select/multi_select types, provide options as a JSON array of objects with 'label' and 'description' fields. The tool will block until the user responds. Returns the user's answer."
+    )]
+    async fn kanban_ask_question(
+        &self,
+        Parameters(input): Parameters<AskQuestionInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = json!({
+            "question": input.question,
+            "question_type": input.question_type,
+            "options": input.options,
+            "multiple": input.multiple,
+        });
+
+        let data = self
+            .post(&format!("/api/cards/{}/questions", input.card_id), &body)
+            .await?;
+
+        let question_id = data
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let max_attempts = 600;
+        for _ in 0..max_attempts {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+            let result = self
+                .get(&format!("/api/cards/{}/questions", input.card_id))
+                .await?;
+
+            if let Some(questions) = result.as_array() {
+                if let Some(q) = questions
+                    .iter()
+                    .find(|q| q.get("id").and_then(|v| v.as_str()) == Some(question_id.as_str()))
+                {
+                    if let Some(answer) = q.get("answer") {
+                        if !answer.is_null() {
+                            return Ok(CallToolResult::success(vec![Content::text(format!(
+                                "User answered: {}",
+                                answer
+                            ))]));
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(McpError::internal_error(
+            "Question timed out after 30 minutes".to_string(),
+            None,
+        ))
+    }
 }
 
 #[tool_handler]
@@ -624,4 +712,48 @@ impl ServerHandler for KanbanMcp {
             ..Default::default()
         }
     }
+}
+
+fn resolve_service_key(explicit_key: Option<String>) -> Option<String> {
+    if let Some(key) = explicit_key {
+        return Some(key);
+    }
+
+    if let Ok(key) = std::env::var("KANBAN_SERVICE_KEY") {
+        let trimmed = key.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+
+    if let Some(key) = read_service_key_file(Path::new(".service-key")) {
+        return Some(key);
+    }
+
+    if let Some(path) = binary_parent_service_key_path() {
+        if let Some(key) = read_service_key_file(&path) {
+            return Some(key);
+        }
+    }
+
+    tracing::warn!(
+        "No service API key found in KANBAN_SERVICE_KEY or .service-key; MCP requests will use JWT-only auth"
+    );
+    None
+}
+
+fn read_service_key_file(path: &Path) -> Option<String> {
+    let key = std::fs::read_to_string(path).ok()?;
+    let trimmed = key.trim().to_string();
+    if trimmed.is_empty() {
+        return None;
+    }
+    tracing::info!("Loaded MCP service API key from {}", path.display());
+    Some(trimmed)
+}
+
+fn binary_parent_service_key_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let parent = exe.parent()?;
+    Some(parent.join(".service-key"))
 }
