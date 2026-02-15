@@ -7,7 +7,6 @@ use reqwest_eventsource::{Event, EventSource};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 use crate::api::handlers::sse::SseEvent;
 use crate::domain::Card;
@@ -68,13 +67,19 @@ impl SseRelayService {
                         continue;
                     };
 
-                    tracing::info!(
-                        event_type = event_type.as_str(),
-                        payload = payload.to_string(),
-                        "Received OpenCode SSE event"
-                    );
+                    if event_type != "server.heartbeat" {
+                        tracing::info!(
+                            event_type = event_type.as_str(),
+                            "Received OpenCode SSE event"
+                        );
+                        tracing::debug!(
+                            event_type = event_type.as_str(),
+                            payload = payload.to_string(),
+                            "OpenCode SSE event payload"
+                        );
+                    }
 
-                    if let Err(err) = self.handle_opencode_event(&event_type, payload).await {
+                    if let Err(err) = self.handle_opencode_event(&event_type, &payload).await {
                         tracing::error!(
                             error = %err,
                             event_type = event_type.as_str(),
@@ -93,13 +98,31 @@ impl SseRelayService {
         Ok(())
     }
 
-    async fn handle_opencode_event(&self, event_type: &str, data: Value) -> Result<()> {
-        let Some(session_id) = data
-            .get("session_id")
+    /// Extract session_id from opencode event properties.
+    /// opencode events nest session ID in different locations:
+    /// - `properties.sessionID` (session.status, session.idle, session.diff)
+    /// - `properties.info.sessionID` (message.updated, session.updated)
+    /// - `properties.part.sessionID` (message.part.updated, message.part.delta)
+    fn extract_session_id(properties: &Value) -> Option<&str> {
+        properties
+            .get("sessionID")
             .and_then(Value::as_str)
-            .or_else(|| data.get("sessionId").and_then(Value::as_str))
-        else {
-            tracing::warn!(event_type, "Skipping OpenCode event without session_id");
+            .or_else(|| {
+                properties
+                    .get("info")
+                    .and_then(|info| info.get("sessionID"))
+                    .and_then(Value::as_str)
+            })
+            .or_else(|| {
+                properties
+                    .get("part")
+                    .and_then(|part| part.get("sessionID"))
+                    .and_then(Value::as_str)
+            })
+    }
+
+    async fn handle_opencode_event(&self, event_type: &str, properties: &Value) -> Result<()> {
+        let Some(session_id) = Self::extract_session_id(properties) else {
             return Ok(());
         };
 
@@ -116,38 +139,75 @@ impl SseRelayService {
         let now = Utc::now().to_rfc3339();
 
         match event_type {
-            "session_started" => {
-                sqlx::query("UPDATE cards SET ai_status = ?, stage = ?, updated_at = ? WHERE id = ?")
-                    .bind("working")
-                    .bind("in_progress")
+            "session.status" => {
+                let status_type = properties
+                    .get("status")
+                    .and_then(|s| s.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+
+                match status_type {
+                    "busy" => {
+                        if card.stage == "todo" {
+                            tracing::info!(
+                                card_id = card.id,
+                                session_id,
+                                "AI session busy → moving card to in_progress"
+                            );
+                            sqlx::query(
+                                "UPDATE cards SET ai_status = ?, stage = ?, updated_at = ? WHERE id = ?",
+                            )
+                            .bind("working")
+                            .bind("in_progress")
+                            .bind(&now)
+                            .bind(&card.id)
+                            .execute(&self.db)
+                            .await?;
+                        }
+                    }
+                    _ => {
+                        return Ok(());
+                    }
+                }
+            }
+
+            "session.idle" => {
+                if card.stage == "in_progress" {
+                    tracing::info!(
+                        card_id = card.id,
+                        session_id,
+                        "AI session idle → moving card to review"
+                    );
+                    sqlx::query(
+                        "UPDATE cards SET ai_status = ?, stage = ?, updated_at = ? WHERE id = ?",
+                    )
+                    .bind("completed")
+                    .bind("review")
                     .bind(&now)
                     .bind(&card.id)
                     .execute(&self.db)
                     .await?;
-            }
-            "todo_completed" => {
-                let mut progress: Value = serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({}));
-                let completed = progress
-                    .get("completed_todos")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0)
-                    + 1;
-                progress["completed_todos"] = json!(completed);
-
-                if let Some(task) = data
-                    .get("task_description")
-                    .or_else(|| data.get("taskDescription"))
-                    .or_else(|| data.get("current_task"))
-                {
-                    progress["current_task"] = task.clone();
                 }
+            }
 
-                if let Some(total) = data
-                    .get("total_todos")
-                    .or_else(|| data.get("totalTodos"))
-                    .and_then(Value::as_i64)
-                {
-                    progress["total_todos"] = json!(total);
+            "message.updated" => {
+                let agent = properties
+                    .get("info")
+                    .and_then(|info| info.get("agent"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+
+                let finish = properties
+                    .get("info")
+                    .and_then(|info| info.get("finish"))
+                    .and_then(Value::as_str);
+
+                let mut progress: Value =
+                    serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({}));
+                progress["current_agent"] = json!(agent);
+
+                if let Some(finish_reason) = finish {
+                    progress["last_finish_reason"] = json!(finish_reason);
                 }
 
                 sqlx::query("UPDATE cards SET ai_progress = ?, updated_at = ? WHERE id = ?")
@@ -157,91 +217,99 @@ impl SseRelayService {
                     .execute(&self.db)
                     .await?;
             }
-            "session_completed" => {
-                sqlx::query("UPDATE cards SET ai_status = ?, stage = ?, updated_at = ? WHERE id = ?")
-                    .bind("completed")
-                    .bind("review")
+
+            "todo.updated" => {
+                let mut progress: Value =
+                    serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({}));
+
+                if let Some(todos) = properties.get("todos").and_then(Value::as_array) {
+                    let total = todos.len();
+                    let completed = todos
+                        .iter()
+                        .filter(|t| {
+                            t.get("status")
+                                .or_else(|| t.get("state"))
+                                .and_then(Value::as_str)
+                                == Some("completed")
+                        })
+                        .count();
+                    progress["total_todos"] = json!(total);
+                    progress["completed_todos"] = json!(completed);
+
+                    if let Some(current) = todos.iter().find(|t| {
+                        t.get("status")
+                            .or_else(|| t.get("state"))
+                            .and_then(Value::as_str)
+                            == Some("in_progress")
+                    }) {
+                        if let Some(content) = current
+                            .get("content")
+                            .or_else(|| current.get("text"))
+                            .and_then(Value::as_str)
+                        {
+                            progress["current_task"] = json!(content);
+                        }
+                    }
+                }
+
+                sqlx::query("UPDATE cards SET ai_progress = ?, updated_at = ? WHERE id = ?")
+                    .bind(progress.to_string())
                     .bind(&now)
                     .bind(&card.id)
                     .execute(&self.db)
                     .await?;
             }
-            "session_error" => {
-                sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
-                    .bind("failed")
-                    .bind(&now)
-                    .bind(&card.id)
-                    .execute(&self.db)
-                    .await?;
 
-                let error_msg = data
-                    .get("error")
-                    .or_else(|| data.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("Unknown error");
-                let comment_id = Uuid::new_v4().to_string();
-
-                sqlx::query(
-                    "INSERT INTO comments (id, card_id, author, content, created_at) VALUES (?, ?, 'ai', ?, ?)",
-                )
-                .bind(&comment_id)
-                .bind(&card.id)
-                .bind(format!("AI session failed: {}", error_msg))
-                .bind(&now)
-                .execute(&self.db)
-                .await?;
-            }
             _ => {
-                tracing::debug!(event_type, "Ignoring unknown OpenCode event type");
                 return Ok(());
             }
         }
 
         let updated_card = CardService::get_card_model(&self.db, &card.id).await?;
-        let progress = serde_json::from_str(&updated_card.ai_progress).unwrap_or_else(|_| json!({}));
+        let progress =
+            serde_json::from_str(&updated_card.ai_progress).unwrap_or_else(|_| json!({}));
         let event = SseEvent::AiStatusChanged {
-            card_id: updated_card.id,
-            status: updated_card.ai_status,
-            progress,
+            card_id: updated_card.id.clone(),
+            status: updated_card.ai_status.clone(),
+            progress: progress.clone(),
         };
 
         if let Ok(payload) = serde_json::to_string(&event) {
             let _ = self.sse_tx.send(payload);
         }
 
+        if updated_card.stage != card.stage {
+            let move_event = SseEvent::CardMoved {
+                card_id: updated_card.id,
+                from_stage: card.stage.clone(),
+                to_stage: updated_card.stage,
+            };
+            if let Ok(payload) = serde_json::to_string(&move_event) {
+                let _ = self.sse_tx.send(payload);
+            }
+        }
+
         Ok(())
     }
 
-    fn extract_event_type_and_payload(raw_event: &str, raw_data: &str) -> Option<(String, Value)> {
+    /// Extract event type and properties from opencode SSE data.
+    ///
+    /// opencode SSE format:
+    /// - SSE `event:` field is NOT set (defaults to "message")
+    /// - SSE `data:` field contains JSON: `{"type": "session.status", "properties": {...}}`
+    fn extract_event_type_and_payload(_raw_event: &str, raw_data: &str) -> Option<(String, Value)> {
         let parsed_data: Value = serde_json::from_str(raw_data).ok()?;
 
-        let event_type = if raw_event.is_empty() {
-            parsed_data
-                .get("type")
-                .or_else(|| parsed_data.get("event"))
-                .or_else(|| parsed_data.get("name"))
-                .and_then(Value::as_str)
-                .map(Self::normalize_event_type)
-        } else {
-            Some(Self::normalize_event_type(raw_event))
-        }?;
+        let event_type = parsed_data
+            .get("type")
+            .and_then(Value::as_str)?
+            .to_string();
 
-        let payload = parsed_data
-            .get("data")
-            .filter(|inner| inner.is_object())
+        let properties = parsed_data
+            .get("properties")
             .cloned()
-            .unwrap_or(parsed_data);
+            .unwrap_or(json!({}));
 
-        Some((event_type, payload))
-    }
-
-    fn normalize_event_type(raw: &str) -> String {
-        match raw {
-            "session.started" | "session-started" => "session_started".to_string(),
-            "todo.completed" | "todo-completed" => "todo_completed".to_string(),
-            "session.completed" | "session-completed" => "session_completed".to_string(),
-            "session.error" | "session-error" => "session_error".to_string(),
-            _ => raw.replace('.', "_").replace('-', "_"),
-        }
+        Some((event_type, properties))
     }
 }
