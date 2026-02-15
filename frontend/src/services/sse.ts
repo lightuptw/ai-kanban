@@ -1,5 +1,5 @@
 import { Dispatch } from "@reduxjs/toolkit";
-import { updateCardFromSSE, removeCardFromSSE } from "../store/slices/kanbanSlice";
+import { updateCardFromSSE, removeCardFromSSE, fetchBoard } from "../store/slices/kanbanSlice";
 import type { Card } from "../types/kanban";
 
 const SSE_URL = (import.meta.env.VITE_API_URL || "http://localhost:3000") + "/api/events";
@@ -61,7 +61,10 @@ export class SSEManager {
         }
         break;
 
+      case "aiStatusChanged":
       case "AiStatusChanged":
+        // Re-fetch the board to pick up card stage/status changes
+        this.dispatch(fetchBoard());
         break;
 
       default:

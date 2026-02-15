@@ -27,18 +27,17 @@ function App({ emotionCache = clientSideEmotionCache }) {
   const { theme } = useTheme();
 
   useEffect(() => {
-    // Temporarily disabled SSE connection for debugging
-    // if (!sseManager) {
-    //   sseManager = new SSEManager(store.dispatch);
-    //   sseManager.connect();
-    // }
+    if (!sseManager) {
+      sseManager = new SSEManager(store.dispatch);
+      sseManager.connect();
+    }
 
-    // return () => {
-    //   if (sseManager) {
-    //     sseManager.disconnect();
-    //     sseManager = null;
-    //   }
-    // };
+    return () => {
+      if (sseManager) {
+        sseManager.disconnect();
+        sseManager = null;
+      }
+    };
   }, []);
 
   return (

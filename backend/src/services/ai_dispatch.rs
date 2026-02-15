@@ -44,7 +44,7 @@ impl AiDispatchService {
         let session_response = match self
             .http_client
             .post(format!("{}/session", self.opencode_url))
-            .json(&json!({"working_directory": card.working_directory}))
+            .json(&json!({}))
             .send()
             .await
         {
@@ -87,37 +87,7 @@ impl AiDispatchService {
             }
         };
 
-        let prompt = format!(
-            "A work plan has been generated at {}. Read it carefully, then execute /start-work to begin. Work through ALL TODOs systematically.",
-            plan_path
-        );
-
-        let prompt_response = match self
-            .http_client
-            .post(format!("{}/session/{}/prompt_async", self.opencode_url, &session_id))
-            .json(&json!({"prompt": prompt}))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                tracing::warn!(card_id = card.id, session_id = session_id.as_str(), error = %err, "Failed to send /start-work prompt");
-                Self::mark_failed_with_plan(db, &card.id, &plan_path).await?;
-                return Ok(String::new());
-            }
-        };
-
-        if !prompt_response.status().is_success() {
-            tracing::warn!(
-                card_id = card.id,
-                session_id = session_id.as_str(),
-                status = %prompt_response.status(),
-                "OpenCode prompt_async returned non-success status"
-            );
-            Self::mark_failed_with_plan(db, &card.id, &plan_path).await?;
-            return Ok(String::new());
-        }
-
+        // Save session_id immediately (before sending the message, which blocks)
         sqlx::query("UPDATE cards SET ai_session_id = ?, ai_status = ?, plan_path = ?, updated_at = ? WHERE id = ?")
             .bind(&session_id)
             .bind("dispatched")
@@ -127,7 +97,44 @@ impl AiDispatchService {
             .execute(db)
             .await?;
 
-        Ok(session_id)
+        // Send the work plan message in a background task.
+        // The /session/{id}/message endpoint is synchronous (blocks until AI finishes),
+        // so we fire-and-forget. The SSE relay will track progress via opencode events.
+        let prompt = format!(
+            "A work plan has been generated at {}. Read it carefully, then execute /start-work to begin. Work through ALL TODOs systematically.",
+            plan_path
+        );
+        let http_client = self.http_client.clone();
+        let message_url = format!("{}/session/{}/message", self.opencode_url, &session_id);
+        let card_id = card.id.clone();
+        let db_clone = db.clone();
+        let session_id_clone = session_id.clone();
+
+        tokio::spawn(async move {
+            tracing::info!(card_id = card_id.as_str(), session_id = session_id_clone.as_str(), "Sending work plan to OpenCode agent");
+
+            let result = http_client
+                .post(&message_url)
+                .json(&json!({"parts": [{"type": "text", "text": prompt}]}))
+                .send()
+                .await;
+
+            match result {
+                Ok(response) if response.status().is_success() => {
+                    tracing::info!(card_id = card_id.as_str(), "OpenCode agent message sent successfully");
+                }
+                Ok(response) => {
+                    tracing::warn!(card_id = card_id.as_str(), status = %response.status(), "OpenCode message returned non-success");
+                    let _ = Self::mark_failed(&db_clone, &card_id).await;
+                }
+                Err(err) => {
+                    tracing::warn!(card_id = card_id.as_str(), error = %err, "Failed to send work plan message");
+                    let _ = Self::mark_failed(&db_clone, &card_id).await;
+                }
+            }
+        });
+
+        Ok(session_id.to_string())
     }
 
     pub async fn abort_session(&self, session_id: &str) -> Result<(), KanbanError> {
