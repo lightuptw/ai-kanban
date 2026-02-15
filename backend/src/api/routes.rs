@@ -36,6 +36,10 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             post(handlers::cards::restore_card_version),
         )
         .route("/{id}/move", patch(handlers::cards::move_card))
+        .route("/{id}/diff", get(handlers::cards::get_card_diff))
+        .route("/{id}/merge", post(handlers::cards::merge_card))
+        .route("/{id}/create-pr", post(handlers::cards::create_card_pr))
+        .route("/{id}/reject", post(handlers::cards::reject_card))
         .route("/{id}/generate-plan", post(handlers::cards::generate_plan))
         .route("/{id}/stop-ai", post(handlers::cards::stop_ai))
         .route("/{id}/resume-ai", post(handlers::cards::resume_ai))

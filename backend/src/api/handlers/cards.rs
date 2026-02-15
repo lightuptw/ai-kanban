@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 
@@ -11,11 +11,40 @@ use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRe
 use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, Stage};
-use crate::services::{AiDispatchService, CardService};
+use crate::services::git_worktree::{DiffResult, MergeResult};
+use crate::services::{AiDispatchService, CardService, GitWorktreeService};
 
 #[derive(Debug, Deserialize)]
 pub struct BoardQuery {
     pub board_id: Option<String>,
+}
+
+async fn get_card_codebase_path(pool: &SqlitePool, card_id: &str) -> Result<String, KanbanError> {
+    let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
+        .bind(card_id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or_default();
+
+    if board_id.is_empty() {
+        return Err(KanbanError::BadRequest("Card is not assigned to a board".into()));
+    }
+
+    let codebase_path = sqlx::query_scalar::<_, String>(
+        "SELECT codebase_path FROM board_settings WHERE board_id = ?",
+    )
+    .bind(&board_id)
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or_default();
+
+    if codebase_path.is_empty() {
+        return Err(KanbanError::BadRequest(
+            "Board codebase path not configured".into(),
+        ));
+    }
+
+    Ok(codebase_path)
 }
 
 pub async fn create_card(
@@ -182,6 +211,38 @@ pub async fn move_card(
     let is_review_to_todo = current_stage == Stage::Review && target_stage == Stage::Todo;
 
     let card = CardService::move_card(pool, &id, req).await?;
+
+    if target_stage == Stage::Done && !previous_card.worktree_path.is_empty() {
+        let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_default();
+
+        if !board_id.is_empty() {
+            if let Ok(codebase_path) = sqlx::query_scalar::<_, String>(
+                "SELECT codebase_path FROM board_settings WHERE board_id = ?",
+            )
+            .bind(&board_id)
+            .fetch_one(pool)
+            .await
+            {
+                let _ = GitWorktreeService::remove_worktree(
+                    &codebase_path,
+                    &previous_card.worktree_path,
+                    &previous_card.branch_name,
+                );
+
+                let _ = sqlx::query(
+                    "UPDATE cards SET branch_name = '', worktree_path = '', working_directory = '.', updated_at = ? WHERE id = ?",
+                )
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(&id)
+                .execute(pool)
+                .await;
+            }
+        }
+    }
 
     if target_stage == Stage::Todo && previous_card.stage != "todo" {
         if is_review_to_todo {
@@ -529,6 +590,154 @@ async fn handle_review_redispatch(
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreatePrRequest {
+    pub title: Option<String>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreatePrResponse {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RejectCardRequest {
+    pub feedback: Option<String>,
+}
+
+pub async fn get_card_diff(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<DiffResult>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.branch_name.is_empty() {
+        return Err(KanbanError::BadRequest("Card has no git branch".into()));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+    let diff = GitWorktreeService::get_diff(&codebase_path, &card.branch_name)?;
+    Ok(Json(diff))
+}
+
+pub async fn merge_card(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<MergeResult>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.branch_name.is_empty() {
+        return Err(KanbanError::BadRequest("Card has no git branch".into()));
+    }
+    if card.stage != "review" {
+        return Err(KanbanError::BadRequest(
+            "Card must be in review stage to merge".into(),
+        ));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+    let result = GitWorktreeService::merge_branch(&codebase_path, &card.branch_name)?;
+
+    if result.success {
+        let _ = GitWorktreeService::remove_worktree(&codebase_path, &card.worktree_path, &card.branch_name);
+
+        sqlx::query("UPDATE cards SET stage = 'done', branch_name = '', worktree_path = '', working_directory = '.', updated_at = ? WHERE id = ?")
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&id)
+            .execute(pool)
+            .await?;
+
+        let event = SseEvent::CardMoved {
+            card_id: id.clone(),
+            from_stage: "review".to_string(),
+            to_stage: "done".to_string(),
+        };
+        if let Ok(payload) = serde_json::to_string(&event) {
+            let _ = state.sse_tx.send(payload);
+        }
+    }
+
+    Ok(Json(result))
+}
+
+pub async fn create_card_pr(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<CreatePrRequest>,
+) -> Result<Json<CreatePrResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.branch_name.is_empty() {
+        return Err(KanbanError::BadRequest("Card has no git branch".into()));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+
+    let title = req.title.unwrap_or_else(|| card.title.clone());
+    let body = req.body.unwrap_or_else(|| {
+        format!(
+            "AI-generated changes for card: {}\n\n{}",
+            card.title, card.description
+        )
+    });
+
+    let url = GitWorktreeService::create_github_pr(&codebase_path, &card.branch_name, &title, &body)?;
+    Ok(Json(CreatePrResponse { url }))
+}
+
+pub async fn reject_card(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RejectCardRequest>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.stage != "review" {
+        return Err(KanbanError::BadRequest(
+            "Card must be in review stage to reject".into(),
+        ));
+    }
+
+    sqlx::query("UPDATE cards SET stage = 'in_progress', ai_status = 'idle', updated_at = ? WHERE id = ?")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    if let Some(feedback) = &req.feedback {
+        if !feedback.is_empty() {
+            let comment_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO comments (id, card_id, author, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&comment_id)
+            .bind(&id)
+            .bind("Reviewer")
+            .bind(format!("**Review Feedback:** {}", feedback))
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    let event = SseEvent::CardMoved {
+        card_id: id.clone(),
+        from_stage: "review".to_string(),
+        to_stage: "in_progress".to_string(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
+    let updated = CardService::get_card_by_id(pool, &id).await?;
+    Ok(Json(updated))
+}
+
 pub async fn stop_ai(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -565,6 +774,23 @@ pub async fn stop_ai(
         .bind(&id)
         .execute(pool)
         .await?;
+
+    if !card.worktree_path.is_empty() {
+        if let Ok(codebase_path) = get_card_codebase_path(pool, &id).await {
+            let _ = GitWorktreeService::remove_worktree(
+                &codebase_path,
+                &card.worktree_path,
+                &card.branch_name,
+            );
+            let _ = sqlx::query(
+                "UPDATE cards SET branch_name = '', worktree_path = '', working_directory = '.', updated_at = ? WHERE id = ?",
+            )
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&id)
+            .execute(pool)
+            .await;
+        }
+    }
 
     let event = SseEvent::AiStatusChanged {
         card_id: id.clone(),
@@ -758,6 +984,33 @@ pub async fn delete_card(
     Path(id): Path<String>,
 ) -> Result<StatusCode, KanbanError> {
     let pool = state.require_db()?;
+
+    if let Ok(card) = CardService::get_card_model(pool, &id).await {
+        if !card.worktree_path.is_empty() {
+            let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
+                .bind(&id)
+                .fetch_optional(pool)
+                .await?
+                .unwrap_or_default();
+
+            if !board_id.is_empty() {
+                if let Ok(codebase_path) = sqlx::query_scalar::<_, String>(
+                    "SELECT codebase_path FROM board_settings WHERE board_id = ?",
+                )
+                .bind(&board_id)
+                .fetch_one(pool)
+                .await
+                {
+                    let _ = GitWorktreeService::remove_worktree(
+                        &codebase_path,
+                        &card.worktree_path,
+                        &card.branch_name,
+                    );
+                }
+            }
+        }
+    }
+
     CardService::delete_card(pool, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

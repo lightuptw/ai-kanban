@@ -149,7 +149,11 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
     const timeout = window.setTimeout(async () => {
       try {
         setSaveState("saving");
-        const updated = await api.updateBoardSettings(boardId, settings);
+        const payload = {
+          ...settings,
+          ai_concurrency: settings.ai_concurrency ? Number(settings.ai_concurrency) : undefined,
+        };
+        const updated = await api.updateBoardSettings(boardId, payload);
         if (cancelled) {
           return;
         }
@@ -210,7 +214,7 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
     }
   };
 
-  const updateField = (key: keyof EditableBoardSettings, value: string) => {
+  const updateField = (key: keyof EditableBoardSettings, value: string | number) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 

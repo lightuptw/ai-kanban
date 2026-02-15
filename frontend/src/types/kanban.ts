@@ -37,6 +37,8 @@ export interface Card {
   ai_progress: string;
   plan_path: string | null;
   linked_documents: string;
+  branch_name: string;
+  worktree_path: string;
   created_at: string;
   updated_at: string;
   ai_agent: string | null;
@@ -53,6 +55,29 @@ export interface BoardResponse {
   in_progress: Card[];
   review: Card[];
   done: Card[];
+}
+
+export interface FileDiff {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  diff: string;
+}
+
+export interface DiffResult {
+  files: FileDiff[];
+  stats: {
+    files_changed: number;
+    additions: number;
+    deletions: number;
+  };
+}
+
+export interface MergeResult {
+  success: boolean;
+  message: string;
+  conflicts: string[];
 }
 
 export interface CreateCardRequest {
@@ -151,7 +176,7 @@ export interface BoardSettings {
 }
 
 export interface UpdateBoardSettingsRequest {
-  ai_concurrency?: string;
+  ai_concurrency?: number | string;
   codebase_path?: string;
   github_repo?: string;
   context_markdown?: string;

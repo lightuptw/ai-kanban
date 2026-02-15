@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 use crate::api::handlers::sse::SseEvent;
 use crate::domain::{Card, KanbanError};
 
-use super::{AiDispatchService, CardService};
+use super::{AiDispatchService, CardService, GitWorktreeService};
 
 pub struct QueueProcessor {
     pub db: SqlitePool,
@@ -46,25 +46,92 @@ impl QueueProcessor {
                 .await?;
 
             for card in queued_cards {
-                let subtasks = CardService::get_subtasks(&self.db, &card.id).await?;
+                let mut dispatch_card = card;
+
+                if dispatch_card.worktree_path.is_empty() {
+                    let codebase_path: Option<String> = sqlx::query_scalar(
+                        "SELECT codebase_path FROM board_settings WHERE board_id = ?",
+                    )
+                    .bind(&board_id)
+                    .fetch_optional(&self.db)
+                    .await
+                    .ok()
+                    .flatten();
+
+                    if let Some(codebase) = codebase_path {
+                        if !codebase.is_empty() {
+                            match GitWorktreeService::create_worktree(
+                                &codebase,
+                                &dispatch_card.id,
+                                &dispatch_card.title,
+                            ) {
+                                Ok((branch_name, worktree_path)) => {
+                                    if let Err(error) = sqlx::query(
+                                        "UPDATE cards SET branch_name = ?, worktree_path = ?, working_directory = ?, updated_at = ? WHERE id = ?",
+                                    )
+                                    .bind(&branch_name)
+                                    .bind(&worktree_path)
+                                    .bind(&worktree_path)
+                                    .bind(chrono::Utc::now().to_rfc3339())
+                                    .bind(&dispatch_card.id)
+                                    .execute(&self.db)
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            card_id = dispatch_card.id,
+                                            error = %error,
+                                            "Failed to persist worktree paths; dispatching with original working directory"
+                                        );
+                                    } else {
+                                        match sqlx::query_as::<_, Card>("SELECT * FROM cards WHERE id = ?")
+                                            .bind(&dispatch_card.id)
+                                            .fetch_one(&self.db)
+                                            .await
+                                        {
+                                            Ok(updated_card) => {
+                                                dispatch_card = updated_card;
+                                            }
+                                            Err(error) => {
+                                                tracing::warn!(
+                                                    card_id = dispatch_card.id,
+                                                    error = %error,
+                                                    "Failed to reload card after worktree creation"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        card_id = dispatch_card.id,
+                                        error = %error,
+                                        "Failed to create worktree; dispatching with original working directory"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let subtasks = CardService::get_subtasks(&self.db, &dispatch_card.id).await?;
                 let dispatcher =
                     AiDispatchService::new(self.http_client.clone(), self.opencode_url.clone());
 
-                match dispatcher.dispatch_card(&card, &subtasks, &self.db).await {
+                match dispatcher.dispatch_card(&dispatch_card, &subtasks, &self.db).await {
                     Ok(_) => {
                         let event = SseEvent::AiStatusChanged {
-                            card_id: card.id.clone(),
+                            card_id: dispatch_card.id.clone(),
                             status: "dispatched".to_string(),
                             progress: json!({}),
-                            stage: card.stage.clone(),
-                            ai_session_id: card.ai_session_id.clone(),
+                            stage: dispatch_card.stage.clone(),
+                            ai_session_id: dispatch_card.ai_session_id.clone(),
                         };
                         if let Ok(payload) = serde_json::to_string(&event) {
                             let _ = self.sse_tx.send(payload);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(card_id = card.id, "Queue dispatch failed: {}", e);
+                        tracing::warn!(card_id = dispatch_card.id, "Queue dispatch failed: {}", e);
                     }
                 }
             }

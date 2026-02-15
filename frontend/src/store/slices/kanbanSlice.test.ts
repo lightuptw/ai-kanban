@@ -19,6 +19,8 @@ const mockCard: Card = {
   ai_status: "idle",
   ai_progress: "{}",
   linked_documents: "[]",
+  branch_name: "",
+  worktree_path: "",
   ai_agent: null,
   created_at: "2026-02-14T00:00:00Z",
   updated_at: "2026-02-14T00:00:00Z",

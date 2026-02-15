@@ -42,6 +42,10 @@ import {
   StopCircle as StopCircleIcon,
   HelpOutline as HelpOutlineIcon,
   PlayArrow as PlayArrowIcon,
+  AccountTree as AccountTreeIcon,
+  CallMerge as CallMergeIcon,
+  RateReview as RateReviewIcon,
+  GitHub as GitHubIcon,
 } from "@mui/icons-material";
 import {
   DndContext,
@@ -58,9 +62,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { RootState, AppDispatch } from "../../redux/store";
-import type { CardVersion } from "../../types/kanban";
+import type { CardVersion, DiffResult, MergeResult } from "../../types/kanban";
 import { updateCard, deleteCard, fetchBoard } from "../../store/slices/kanbanSlice";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { DiffViewer } from "./DiffViewer";
 import { api } from "../../services/api";
 import { STAGE_COLORS } from "../../constants/stageColors";
 
@@ -247,6 +252,13 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const [versions, setVersions] = useState<CardVersion[]>([]);
   const [showVersions, setShowVersions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [diffData, setDiffData] = useState<DiffResult | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
+  const [creatingPr, setCreatingPr] = useState(false);
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectFeedback, setRejectFeedback] = useState("");
   const [questions, setQuestions] = useState<AiQuestion[]>([]);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({});
   const [textAnswers, setTextAnswers] = useState<Record<string, string>>({});
@@ -266,6 +278,13 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
       setSelectedAnswers({});
       setTextAnswers({});
       setSubmittingQuestion(null);
+      setDiffData(null);
+      setLoadingDiff(false);
+      setMergeResult(null);
+      setMerging(false);
+      setCreatingPr(false);
+      setShowRejectDialog(false);
+      setRejectFeedback("");
       loadedCardRef.current = {
         title: card.title,
         description: card.description || "",
@@ -297,6 +316,21 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         .catch((err) => console.error("Failed to fetch card questions:", err));
     }
   }, [card?.id]);
+
+  useEffect(() => {
+    if (card?.stage === "review" && card?.branch_name) {
+      setLoadingDiff(true);
+      api
+        .getCardDiff(cardId)
+        .then(setDiffData)
+        .catch((err) => console.error("Failed to load diff:", err))
+        .finally(() => setLoadingDiff(false));
+      return;
+    }
+
+    setDiffData(null);
+    setLoadingDiff(false);
+  }, [card?.stage, card?.branch_name, cardId]);
 
   useEffect(() => {
     if (!card || !loadedCardRef.current) {
@@ -621,7 +655,46 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
        console.error("Failed to resume AI:", err);
        setErrorMessage("Failed to resume AI. Is opencode running?");
      }
-   };
+    };
+
+  const handleMerge = async () => {
+    setMerging(true);
+    setMergeResult(null);
+    try {
+      const result = await api.mergeCard(cardId);
+      setMergeResult(result);
+      if (result.success) {
+        onClose();
+      }
+    } catch (err) {
+      setErrorMessage("Failed to merge");
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const handleCreatePr = async () => {
+    setCreatingPr(true);
+    try {
+      const result = await api.createCardPr(cardId);
+      window.open(result.url, "_blank");
+    } catch (err) {
+      setErrorMessage("Failed to create PR. Is `gh` CLI installed?");
+    } finally {
+      setCreatingPr(false);
+    }
+  };
+
+  const handleReject = async () => {
+    try {
+      await api.rejectCard(cardId, rejectFeedback);
+      setShowRejectDialog(false);
+      setRejectFeedback("");
+      onClose();
+    } catch (err) {
+      setErrorMessage("Failed to reject card");
+    }
+  };
 
   const isAiResumable = card && !isAiActive && ["plan", "todo", "in_progress"].includes(card.stage) && card.ai_status && ["idle", "cancelled", "failed", "completed"].includes(card.ai_status) && card.ai_status !== "idle";
 
@@ -686,6 +759,22 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 <MenuItem value="qa">qa</MenuItem>
               </Select>
             </FormControl>
+          </Section>
+        )}
+
+        {card.branch_name && (
+          <Section>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography variant="subtitle2" color="text.secondary">
+                Branch:
+              </Typography>
+              <Chip
+                label={card.branch_name}
+                size="small"
+                icon={<AccountTreeIcon />}
+                sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+              />
+            </Box>
           </Section>
         )}
 
@@ -1170,6 +1259,57 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           </Section>
         )}
 
+        {card.stage === "review" && (
+          <Section>
+            <SectionTitle variant="subtitle1">Code Review</SectionTitle>
+
+            <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap" }}>
+              <Button
+                variant="contained"
+                color="success"
+                startIcon={<CallMergeIcon />}
+                onClick={handleMerge}
+                disabled={merging}
+              >
+                {merging ? "Merging..." : "Merge to Main"}
+              </Button>
+              <Button
+                variant="contained"
+                color="warning"
+                startIcon={<RateReviewIcon />}
+                onClick={() => setShowRejectDialog(true)}
+              >
+                Request Changes
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<GitHubIcon />}
+                onClick={handleCreatePr}
+                disabled={creatingPr}
+              >
+                {creatingPr ? "Creating..." : "Create PR"}
+              </Button>
+            </Box>
+
+            <DiffViewer diff={diffData} loading={loadingDiff} />
+
+            {mergeResult && !mergeResult.success && (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  Merge failed: {mergeResult.conflicts.length} conflict(s)
+                </Typography>
+                <Box component="ul" sx={{ pl: 2, m: 0 }}>
+                  {mergeResult.conflicts.map((filePath) => (
+                    <Box component="li" key={filePath} sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                      {filePath}
+                    </Box>
+                  ))}
+                </Box>
+              </Alert>
+            )}
+          </Section>
+        )}
+
         {card && ['plan', 'todo', 'in_progress'].includes(card.stage) && (
           <Section>
             <SectionTitle variant="subtitle1">AI Agent Logs</SectionTitle>
@@ -1310,6 +1450,29 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           )}
         </Section>
       </DialogContent>
+
+      <Dialog open={showRejectDialog} onClose={() => setShowRejectDialog(false)}>
+        <DialogTitle>Request Changes</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            multiline
+            rows={4}
+            label="Feedback for AI"
+            value={rejectFeedback}
+            onChange={(e) => setRejectFeedback(e.target.value)}
+            placeholder="Describe what needs to change..."
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowRejectDialog(false)}>Cancel</Button>
+          <Button onClick={handleReject} variant="contained" color="warning">
+            Send Back
+          </Button>
+        </DialogActions>
+      </Dialog>
 
        <DialogActions sx={{ justifyContent: "space-between", p: 2 }}>
          <Button startIcon={<DeleteIcon />} color="error" onClick={handleDelete}>

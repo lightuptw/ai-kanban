@@ -18,6 +18,8 @@ import type {
   CardVersion,
   BoardSettings,
   UpdateBoardSettingsRequest,
+  DiffResult,
+  MergeResult,
 } from "../types/kanban";
 
 interface AiQuestion {
@@ -179,6 +181,24 @@ export const api = {
   restoreCardVersion: (cardId: string, versionId: string) =>
     fetchAPI<Card>(`/api/cards/${cardId}/versions/${versionId}/restore`, {
       method: "POST",
+    }),
+
+  getCardDiff: (cardId: string) =>
+    fetchAPI<DiffResult>(`/api/cards/${cardId}/diff`),
+
+  mergeCard: (cardId: string) =>
+    fetchAPI<MergeResult>(`/api/cards/${cardId}/merge`, { method: "POST" }),
+
+  createCardPr: (cardId: string, title?: string, body?: string) =>
+    fetchAPI<{ url: string }>(`/api/cards/${cardId}/create-pr`, {
+      method: "POST",
+      body: JSON.stringify({ title, body }),
+    }),
+
+  rejectCard: (cardId: string, feedback?: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ feedback }),
     }),
 
   // Boards

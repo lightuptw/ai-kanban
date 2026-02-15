@@ -7,10 +7,11 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   Avatar,
   AvatarGroup as MuiAvatarGroup,
+  Chip,
   IconButton,
   Typography as MuiTypography,
 } from "@mui/material";
-import { StopCircle } from "@mui/icons-material";
+import { AccountTree, StopCircle } from "@mui/icons-material";
 import { spacing } from "@mui/system";
 import { STAGE_COLORS } from "../../constants/stageColors";
 import { api } from "../../services/api";
@@ -112,6 +113,7 @@ const LarsonScanner = styled.div<LarsonScannerProps>`
 interface KanbanCardProps {
   id: string;
   title: string;
+  branch_name?: string;
   badges?: string[];
   notifications?: number;
   avatars?: number[];
@@ -123,6 +125,7 @@ interface KanbanCardProps {
 export const KanbanCard: React.FC<KanbanCardProps> = ({
   id,
   title,
+  branch_name,
   badges = [],
   notifications = 0,
   avatars = [],
@@ -197,6 +200,15 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         <TaskTitle variant="body1" gutterBottom>
           {title}
         </TaskTitle>
+
+        {branch_name && (
+          <Chip
+            label={branch_name}
+            size="small"
+            icon={<AccountTree sx={{ fontSize: "0.85rem !important" }} />}
+            sx={{ fontFamily: "monospace", fontSize: "0.65rem", maxWidth: "100%", mb: 1 }}
+          />
+        )}
 
         <TaskAvatars>
           <AvatarGroup max={3}>
