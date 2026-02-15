@@ -129,6 +129,28 @@ struct DeleteCommentInput {
     comment_id: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+struct GetBoardSettingsInput {
+    board_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+struct UpdateBoardSettingsInput {
+    board_id: String,
+    codebase_path: Option<String>,
+    github_repo: Option<String>,
+    context_markdown: Option<String>,
+    document_links: Option<String>,
+    variables: Option<String>,
+    tech_stack: Option<String>,
+    communication_patterns: Option<String>,
+    environments: Option<String>,
+    code_conventions: Option<String>,
+    testing_requirements: Option<String>,
+    api_conventions: Option<String>,
+    infrastructure: Option<String>,
+}
+
 #[tool_router]
 impl KanbanMcp {
     pub fn new<T: IntoKanbanApiUrl>(base_url: T) -> Self {
@@ -209,6 +231,32 @@ impl KanbanMcp {
             .send()
             .await
             .map_err(|e| Self::api_err(format!("HTTP PATCH {}: {}", path, e)))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            return Err(McpError::internal_error(
+                format!("API error {}: {}", status, body_text),
+                None,
+            ));
+        }
+        resp.json()
+            .await
+            .map_err(|e| Self::api_err(format!("JSON decode: {}", e)))
+    }
+
+    async fn put(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, McpError> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .put(&url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Self::api_err(format!("HTTP PUT {}: {}", path, e)))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
@@ -493,6 +541,72 @@ impl KanbanMcp {
     ) -> Result<CallToolResult, McpError> {
         let data = self
             .delete(&format!("/api/comments/{}", input.comment_id))
+            .await?;
+        Self::json_result(&data)
+    }
+
+    #[tool(
+        description = "Get board-level settings including codebase path, AI context, tech stack, conventions, and environment details. Use this to understand the project context before working on cards in this board."
+    )]
+    async fn kanban_get_board_settings(
+        &self,
+        Parameters(input): Parameters<GetBoardSettingsInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let data = self
+            .get(&format!("/api/boards/{}/settings", input.board_id))
+            .await?;
+        Self::json_result(&data)
+    }
+
+    #[tool(
+        description = "Update board-level settings. Use this to set codebase path, AI context, tech stack, conventions, environments, and infrastructure details that apply to all cards in the board."
+    )]
+    async fn kanban_update_board_settings(
+        &self,
+        Parameters(input): Parameters<UpdateBoardSettingsInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut body = serde_json::Map::new();
+        if let Some(v) = input.codebase_path {
+            body.insert("codebase_path".into(), json!(v));
+        }
+        if let Some(v) = input.github_repo {
+            body.insert("github_repo".into(), json!(v));
+        }
+        if let Some(v) = input.context_markdown {
+            body.insert("context_markdown".into(), json!(v));
+        }
+        if let Some(v) = input.document_links {
+            body.insert("document_links".into(), json!(v));
+        }
+        if let Some(v) = input.variables {
+            body.insert("variables".into(), json!(v));
+        }
+        if let Some(v) = input.tech_stack {
+            body.insert("tech_stack".into(), json!(v));
+        }
+        if let Some(v) = input.communication_patterns {
+            body.insert("communication_patterns".into(), json!(v));
+        }
+        if let Some(v) = input.environments {
+            body.insert("environments".into(), json!(v));
+        }
+        if let Some(v) = input.code_conventions {
+            body.insert("code_conventions".into(), json!(v));
+        }
+        if let Some(v) = input.testing_requirements {
+            body.insert("testing_requirements".into(), json!(v));
+        }
+        if let Some(v) = input.api_conventions {
+            body.insert("api_conventions".into(), json!(v));
+        }
+        if let Some(v) = input.infrastructure {
+            body.insert("infrastructure".into(), json!(v));
+        }
+        let data = self
+            .put(
+                &format!("/api/boards/{}/settings", input.board_id),
+                &serde_json::Value::Object(body),
+            )
             .await?;
         Self::json_result(&data)
     }

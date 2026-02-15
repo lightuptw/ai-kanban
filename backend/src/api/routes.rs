@@ -70,7 +70,16 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             "/{id}",
             patch(handlers::boards::update_board).delete(handlers::boards::delete_board),
         )
-        .route("/{id}/reorder", patch(handlers::boards::reorder_board));
+        .route("/{id}/reorder", patch(handlers::boards::reorder_board))
+        .route(
+            "/{id}/settings",
+            get(handlers::board_settings::get_board_settings)
+                .put(handlers::board_settings::update_board_settings),
+        )
+        .route(
+            "/{id}/settings/auto-detect",
+            post(handlers::board_settings::auto_detect_board_settings),
+        );
 
     let file_routes = Router::new().route(
         "/{id}",

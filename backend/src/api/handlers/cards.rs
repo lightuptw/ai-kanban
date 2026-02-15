@@ -309,6 +309,83 @@ pub async fn generate_plan(
         .execute(pool)
         .await?;
 
+    let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
+        .bind(&card.id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or_default();
+
+    let board_context = if !board_id.is_empty() {
+        let settings: Option<(String, String, String, String, String, String, String, String, String, String)> =
+            sqlx::query_as(
+                "SELECT codebase_path, context_markdown, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, github_repo FROM board_settings WHERE board_id = ?",
+            )
+            .bind(&board_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+        if let Some((
+            codebase_path,
+            context_markdown,
+            tech_stack,
+            communication_patterns,
+            environments,
+            code_conventions,
+            testing_requirements,
+            api_conventions,
+            infrastructure,
+            github_repo,
+        )) = settings
+        {
+            let mut context_sections = Vec::new();
+
+            if !context_markdown.is_empty() {
+                context_sections.push(format!("{}\n\n", context_markdown));
+            }
+            if !codebase_path.trim().is_empty() {
+                context_sections.push(format!("### Codebase Path\n{}\n\n", codebase_path));
+            }
+            if !tech_stack.trim().is_empty() {
+                context_sections.push(format!("### Tech Stack\n{}\n\n", tech_stack));
+            }
+            if !communication_patterns.trim().is_empty() {
+                context_sections.push(format!(
+                    "### Communication Patterns\n{}\n\n",
+                    communication_patterns
+                ));
+            }
+            if !environments.trim().is_empty() {
+                context_sections.push(format!("### Environments\n{}\n\n", environments));
+            }
+            if !code_conventions.trim().is_empty() {
+                context_sections.push(format!("### Code Conventions\n{}\n\n", code_conventions));
+            }
+            if !testing_requirements.trim().is_empty() {
+                context_sections.push(format!(
+                    "### Testing Requirements\n{}\n\n",
+                    testing_requirements
+                ));
+            }
+            if !api_conventions.trim().is_empty() {
+                context_sections.push(format!("### API Conventions\n{}\n\n", api_conventions));
+            }
+            if !infrastructure.trim().is_empty() {
+                context_sections.push(format!("### Infrastructure\n{}\n\n", infrastructure));
+            }
+            if !github_repo.trim().is_empty() {
+                context_sections.push(format!("### GitHub Repository\n{}\n\n", github_repo));
+            }
+
+            context_sections.concat()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     let prompt = format!(
         "IMPORTANT: You are working on card_id = \"{}\". ALL subtasks must be created on THIS card. Do NOT create new cards.\n\n\
 ## SAFETY RULES — MANDATORY\n\
@@ -319,6 +396,8 @@ pub async fn generate_plan(
 - Do NOT attempt to fix MCP tool errors by accessing underlying infrastructure\n\
 - If a kanban MCP tool returns an error, STOP and report the error. Do NOT work around it.\n\n\
 You are a project planning assistant. Analyze this card and create a detailed implementation plan.\n\n\
+## Board Context (apply to ALL work on this board)\n\
+{}\n\n\
 ## Card Details\n\
 - Card ID: {}\n\
 - Title: {}\n\
@@ -337,6 +416,7 @@ You are a project planning assistant. Analyze this card and create a detailed im
 6. Add a summary comment using `kanban_add_comment`\n\n\
 CRITICAL: The card_id for ALL tool calls is: {}",
         card.id,
+        board_context,
         card.id,
         card.title,
         card.description,

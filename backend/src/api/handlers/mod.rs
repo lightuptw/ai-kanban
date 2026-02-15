@@ -1,3 +1,4 @@
+pub mod board_settings;
 pub mod boards;
 pub mod cards;
 pub mod comments;

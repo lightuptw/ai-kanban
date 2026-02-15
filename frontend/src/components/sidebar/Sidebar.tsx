@@ -37,6 +37,7 @@ import {
   Add as AddIcon,
   Dashboard as DashboardIcon,
   DragIndicator as DragIcon,
+  Settings as SettingsIcon,
 } from "@mui/icons-material";
 
 import lightupLogo from "../../vendor/lightup_logo.png";
@@ -45,6 +46,7 @@ import Footer from "./SidebarFooter";
 import { RootState, AppDispatch } from "../../redux/store";
 import { setActiveBoard, createBoard, reorderBoard, optimisticReorderBoards } from "../../store/slices/kanbanSlice";
 import type { Board } from "../../types/kanban";
+import BoardSettingsDialog from "../../pages/kanban/BoardSettingsDialog";
 
 const Drawer = styled(MuiDrawer)`
   border-right: 0;
@@ -132,6 +134,15 @@ const BoardItem = styled(ListItemButton, {
     background: rgba(255, 255, 255, 0.08);
   }
 
+  .settings-icon {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  &:hover .settings-icon {
+    opacity: 0.6;
+  }
+
   svg {
     color: ${(props) => props.theme.sidebar.color};
     opacity: 0.5;
@@ -146,9 +157,15 @@ interface SortableBoardItemProps {
   board: Board;
   isActive: boolean;
   onSelect: () => void;
+  onSettings?: (board: Board) => void;
 }
 
-const SortableBoardItem: React.FC<SortableBoardItemProps> = ({ board, isActive, onSelect }) => {
+const SortableBoardItem: React.FC<SortableBoardItemProps> = ({
+  board,
+  isActive,
+  onSelect,
+  onSettings,
+}) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: board.id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -167,6 +184,21 @@ const SortableBoardItem: React.FC<SortableBoardItemProps> = ({ board, isActive, 
           primary={board.name}
           primaryTypographyProps={{ fontSize: "0.875rem", noWrap: true }}
         />
+        <IconButton
+          size="small"
+          className="settings-icon"
+          onClick={(event) => {
+            event.stopPropagation();
+            onSettings?.(board);
+          }}
+          sx={{
+            ml: 1,
+            color: "inherit",
+            "& .MuiSvgIcon-root": { marginRight: 0, fontSize: 18 },
+          }}
+        >
+          <SettingsIcon />
+        </IconButton>
       </BoardItem>
     </div>
   );
@@ -214,6 +246,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const { boards, activeBoardId } = useSelector((state: RootState) => state.kanban);
   const [addingBoard, setAddingBoard] = useState(false);
   const [newBoardName, setNewBoardName] = useState("");
+  const [settingsBoard, setSettingsBoard] = useState<Board | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -278,6 +311,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   board={board}
                   isActive={board.id === activeBoardId}
                   onSelect={() => dispatch(setActiveBoard(board.id))}
+                  onSettings={(selectedBoard) => setSettingsBoard(selectedBoard)}
                 />
               ))}
             </List>
@@ -324,6 +358,14 @@ const Sidebar: React.FC<SidebarProps> = ({
           </AddBoardRow>
         )}
       </BoardList>
+      {settingsBoard && (
+        <BoardSettingsDialog
+          open={Boolean(settingsBoard)}
+          boardId={settingsBoard.id}
+          boardName={settingsBoard.name}
+          onClose={() => setSettingsBoard(null)}
+        />
+      )}
       {!!showFooter && <Footer />}
     </Drawer>
   );

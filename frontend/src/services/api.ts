@@ -16,6 +16,8 @@ import type {
   ReorderBoardRequest,
   AgentLog,
   CardVersion,
+  BoardSettings,
+  UpdateBoardSettingsRequest,
 } from "../types/kanban";
 
 const API_BASE_URL =
@@ -151,6 +153,27 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  getBoardSettings: (boardId: string) =>
+    fetchAPI<BoardSettings>(`/api/boards/${boardId}/settings`),
+
+  updateBoardSettings: (boardId: string, data: UpdateBoardSettingsRequest) =>
+    fetchAPI<BoardSettings>(`/api/boards/${boardId}/settings`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  autoDetectBoardSettings: (boardId: string, codebasePath: string) =>
+    fetchAPI<{ status: string }>(`/api/boards/${boardId}/settings/auto-detect`, {
+      method: "POST",
+      body: JSON.stringify({ codebase_path: codebasePath }),
+    }),
+
+  pickDirectory: () =>
+    fetchAPI<{ path: string | null; paths: string[] }>("/api/pick-directory", { method: "POST" }),
+
+  pickFiles: () =>
+    fetchAPI<{ path: string | null; paths: string[] }>("/api/pick-files", { method: "POST" }),
 
   // Settings
   getSetting: (key: string) =>

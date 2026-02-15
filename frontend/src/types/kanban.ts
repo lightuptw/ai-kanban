@@ -130,3 +130,36 @@ export interface CardVersion {
   changed_by: string;
   created_at: string;
 }
+
+export interface BoardSettings {
+  board_id: string;
+  codebase_path: string;
+  github_repo: string;
+  context_markdown: string;
+  document_links: string;
+  variables: string;
+  tech_stack: string;
+  communication_patterns: string;
+  environments: string;
+  code_conventions: string;
+  testing_requirements: string;
+  api_conventions: string;
+  infrastructure: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateBoardSettingsRequest {
+  codebase_path?: string;
+  github_repo?: string;
+  context_markdown?: string;
+  document_links?: string;
+  variables?: string;
+  tech_stack?: string;
+  communication_patterns?: string;
+  environments?: string;
+  code_conventions?: string;
+  testing_requirements?: string;
+  api_conventions?: string;
+  infrastructure?: string;
+}
