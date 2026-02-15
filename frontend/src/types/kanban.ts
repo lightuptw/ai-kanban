@@ -122,3 +122,11 @@ export interface AgentLog {
   metadata: string;
   created_at: string;
 }
+
+export interface CardVersion {
+  id: string;
+  card_id: string;
+  snapshot: string;
+  changed_by: string;
+  created_at: string;
+}

@@ -15,6 +15,7 @@ import type {
   UpdateBoardRequest,
   ReorderBoardRequest,
   AgentLog,
+  CardVersion,
 } from "../types/kanban";
 
 const API_BASE_URL =
@@ -114,6 +115,13 @@ export const api = {
     }),
 
   getCardLogs: (cardId: string) => fetchAPI<AgentLog[]>(`/api/cards/${cardId}/logs`),
+
+  getCardVersions: (cardId: string) => fetchAPI<CardVersion[]>(`/api/cards/${cardId}/versions`),
+
+  restoreCardVersion: (cardId: string, versionId: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/versions/${versionId}/restore`, {
+      method: "POST",
+    }),
 
   // Boards
   listBoards: () => fetchAPI<Board[]>("/api/boards"),

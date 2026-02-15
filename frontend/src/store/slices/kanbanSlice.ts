@@ -139,6 +139,54 @@ const kanbanSlice = createSlice({
         state.columns[stage].sort((a, b) => a.position - b.position);
       }
     },
+    updateCardAiStatus: (
+      state,
+      action: PayloadAction<{
+        cardId: string;
+        status: string;
+        progress?: any;
+        stage?: string;
+        ai_session_id?: string | null;
+      }>
+    ) => {
+      const { cardId, status, progress, stage: newStage, ai_session_id } = action.payload;
+      for (const stageName of Object.keys(state.columns) as Stage[]) {
+        const index = state.columns[stageName].findIndex((c) => c.id === cardId);
+        if (index !== -1) {
+          const card = state.columns[stageName][index];
+          card.ai_status = status;
+          if (progress !== undefined) {
+            card.ai_progress = typeof progress === "string" ? progress : JSON.stringify(progress);
+          }
+          if (ai_session_id !== undefined) {
+            card.ai_session_id = ai_session_id;
+          }
+          // If stage changed, move card to new stage
+          if (newStage && newStage !== stageName) {
+            state.columns[stageName].splice(index, 1);
+            card.stage = newStage as Stage;
+            state.columns[newStage as Stage].push(card);
+            state.columns[newStage as Stage].sort((a, b) => a.position - b.position);
+          }
+          break;
+        }
+      }
+    },
+    moveCardInStore: (
+      state,
+      action: PayloadAction<{ cardId: string; fromStage: string; toStage: string }>
+    ) => {
+      const { cardId, fromStage, toStage } = action.payload;
+      const from = fromStage as Stage;
+      const to = toStage as Stage;
+      const index = state.columns[from]?.findIndex((c) => c.id === cardId);
+      if (index !== undefined && index !== -1) {
+        const [card] = state.columns[from].splice(index, 1);
+        card.stage = to;
+        state.columns[to].push(card);
+        state.columns[to].sort((a, b) => a.position - b.position);
+      }
+    },
     removeCardFromSSE: (state, action: PayloadAction<string>) => {
       const cardId = action.payload;
       for (const stage of Object.keys(state.columns) as Stage[]) {
@@ -226,7 +274,7 @@ const kanbanSlice = createSlice({
   },
 });
 
-export const { setSelectedCard, setActiveBoard, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards } =
+export const { setSelectedCard, setActiveBoard, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards, updateCardAiStatus, moveCardInStore } =
   kanbanSlice.actions;
 
 export default kanbanSlice.reducer;

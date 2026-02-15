@@ -5,12 +5,12 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
 use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
-use crate::domain::{AgentLog, Card, Comment, KanbanError, Stage};
+use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, Stage};
 use crate::services::CardService;
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +58,98 @@ pub async fn get_card_logs(
     .await
     .map_err(|e| KanbanError::Internal(e.to_string()))?;
     Ok(Json(logs))
+}
+
+pub async fn list_card_versions(
+    State(state): State<AppState>,
+    Path(card_id): Path<String>,
+) -> Result<Json<Vec<CardVersion>>, KanbanError> {
+    let pool = state.require_db()?;
+    let versions: Vec<CardVersion> = sqlx::query_as(
+        "SELECT * FROM card_versions WHERE card_id = ? ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(&card_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(Json(versions))
+}
+
+pub async fn restore_card_version(
+    State(state): State<AppState>,
+    Path((card_id, version_id)): Path<(String, String)>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let version: CardVersion =
+        sqlx::query_as("SELECT * FROM card_versions WHERE id = ? AND card_id = ?")
+            .bind(&version_id)
+            .bind(&card_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| {
+                KanbanError::NotFound(format!(
+                    "Card version not found: {} for card {}",
+                    version_id, card_id
+                ))
+            })?;
+
+    let snapshot: serde_json::Value = serde_json::from_str(&version.snapshot)
+        .map_err(|e| KanbanError::BadRequest(format!("Invalid card snapshot payload: {}", e)))?;
+
+    let current_card = CardService::get_card_model(pool, &card_id).await?;
+    CardService::save_card_version_snapshot(pool, &current_card, "restore").await?;
+
+    let title = snapshot
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let description = snapshot
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let priority = snapshot
+        .get("priority")
+        .and_then(Value::as_str)
+        .unwrap_or("medium")
+        .to_string();
+    let stage = snapshot
+        .get("stage")
+        .and_then(Value::as_str)
+        .unwrap_or(current_card.stage.as_str())
+        .to_string();
+    let working_directory = snapshot
+        .get("working_directory")
+        .and_then(Value::as_str)
+        .unwrap_or(".")
+        .to_string();
+    let linked_documents = snapshot
+        .get("linked_documents")
+        .and_then(Value::as_str)
+        .unwrap_or("[]")
+        .to_string();
+
+    stage
+        .parse::<Stage>()
+        .map_err(|e| KanbanError::BadRequest(e))?;
+
+    sqlx::query(
+        "UPDATE cards SET title = ?, description = ?, stage = ?, priority = ?, working_directory = ?, linked_documents = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&title)
+    .bind(&description)
+    .bind(&stage)
+    .bind(&priority)
+    .bind(&working_directory)
+    .bind(&linked_documents)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(&card_id)
+    .execute(pool)
+    .await?;
+
+    let card = CardService::get_card_by_id(pool, &card_id).await?;
+    Ok(Json(card))
 }
 
 pub async fn update_card(
@@ -111,6 +203,8 @@ pub async fn move_card(
             card_id: id,
             status: updated_card.ai_status.clone(),
             progress: updated_card.ai_progress.clone(),
+            stage: updated_card.stage.clone(),
+            ai_session_id: updated_card.ai_session_id.clone(),
         };
         if let Ok(payload) = serde_json::to_string(&event) {
             let _ = state.sse_tx.send(payload);
@@ -144,6 +238,38 @@ pub async fn generate_plan(
             .map(|s| format!("- {}", s.title))
             .collect::<Vec<_>>()
             .join("\n")
+    };
+
+    let linked_docs_formatted = serde_json::from_str::<Vec<String>>(&card.linked_documents)
+        .ok()
+        .filter(|docs| !docs.is_empty())
+        .map(|docs| {
+            docs.iter()
+                .map(|doc| format!("- {}", doc))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_else(|| "None".to_string());
+
+    let attached_files_formatted = match sqlx::query(
+        "SELECT original_filename, file_size, mime_type FROM card_files WHERE card_id = ? ORDER BY uploaded_at ASC",
+    )
+    .bind(&card_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) if rows.is_empty() => "None".to_string(),
+        Ok(rows) => rows
+            .iter()
+            .map(|row| {
+                let name: String = row.get("original_filename");
+                let size: i64 = row.get("file_size");
+                let mime: String = row.get("mime_type");
+                format!("- {} ({} bytes, {})", name, size, mime)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Err(_) => "None".to_string(),
     };
 
     let session_response = state
@@ -184,12 +310,17 @@ pub async fn generate_plan(
         .await?;
 
     let prompt = format!(
-        "You are a project planning assistant. Analyze this card and create a detailed implementation plan.\n\nCard Title: {}\nDescription: {}\nPriority: {}\nWorking Directory: {}\nCurrent Subtasks: {}\n\nYour job:\n1. Analyze the card requirements\n2. Break down the work into concrete, actionable subtasks\n3. For each subtask, use the kanban MCP tool `create_subtask` to add it to the card\n4. Set appropriate phase names for grouping related subtasks\n5. Summarize your plan at the end\n\nUse the kanban MCP tools to create subtasks. The card_id is: {}",
+        "IMPORTANT: You are working on card_id = \"{}\". ALL subtasks must be created on THIS card. Do NOT create new cards.\n\nYou are a project planning assistant. Analyze this card and create a detailed implementation plan.\n\n## Card Details\n- Card ID: {}\n- Title: {}\n- Description: {}\n- Priority: {}\n- Working Directory: {}\n- Linked Documents:\n{}\n- Attached Files:\n{}\n- Current Subtasks:\n{}\n\n## Instructions\n1. Analyze the card requirements\n2. Break down the work into concrete, actionable subtasks organized by phases\n3. Use the `kanban_create_subtask` MCP tool to add each subtask to card_id \"{}\"\n4. Set appropriate phase names (e.g., \"Design\", \"Implementation\", \"Testing\") and phase_order for grouping\n5. If you create any plan documents or markdown files, update the card's linked_documents using `kanban_update_card`\n6. Add a summary comment using `kanban_add_comment`\n\nCRITICAL: The card_id for ALL tool calls is: {}",
+        card.id,
+        card.id,
         card.title,
         card.description,
         card.priority,
         card.working_directory,
+        linked_docs_formatted,
+        attached_files_formatted,
         subtask_titles,
+        card.id,
         card.id,
     );
 

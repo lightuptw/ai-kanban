@@ -1,4 +1,5 @@
 use chrono::Utc;
+use serde_json::json;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -11,6 +12,44 @@ use crate::domain::{Card, Comment, KanbanError, Label, Stage, Subtask};
 pub struct CardService;
 
 impl CardService {
+    pub async fn save_card_version_snapshot(
+        pool: &SqlitePool,
+        card: &Card,
+        changed_by: &str,
+    ) -> Result<(), KanbanError> {
+        let snapshot = json!({
+            "title": &card.title,
+            "description": &card.description,
+            "priority": &card.priority,
+            "stage": &card.stage,
+            "working_directory": &card.working_directory,
+            "linked_documents": &card.linked_documents,
+        });
+
+        let version_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO card_versions (id, card_id, snapshot, changed_by, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&version_id)
+        .bind(&card.id)
+        .bind(snapshot.to_string())
+        .bind(changed_by)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "DELETE FROM card_versions WHERE id IN (SELECT id FROM card_versions WHERE card_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET 50)",
+        )
+        .bind(&card.id)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
     // ── Card CRUD ──────────────────────────────────────────────
 
     pub async fn create_card(
@@ -181,6 +220,7 @@ impl CardService {
             .fetch_optional(pool)
             .await?
             .ok_or_else(|| KanbanError::NotFound(format!("Card not found: {}", id)))?;
+        let existing_for_snapshot = existing.clone();
 
         let now = Utc::now().to_rfc3339();
         let title = req.title.unwrap_or(existing.title);
@@ -199,6 +239,8 @@ impl CardService {
         stage
             .parse::<Stage>()
             .map_err(|e| KanbanError::BadRequest(e))?;
+
+        Self::save_card_version_snapshot(pool, &existing_for_snapshot, "user").await?;
 
         sqlx::query(
             "UPDATE cards SET title = ?, description = ?, stage = ?, position = ?, priority = ?, working_directory = ?, linked_documents = ?, ai_agent = ?, updated_at = ? WHERE id = ?",

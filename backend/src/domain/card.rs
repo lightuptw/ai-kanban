@@ -60,3 +60,12 @@ pub struct AgentLog {
     pub metadata: String,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CardVersion {
+    pub id: String,
+    pub card_id: String,
+    pub snapshot: String,
+    pub changed_by: String,
+    pub created_at: String,
+}

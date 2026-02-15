@@ -20,7 +20,7 @@ pub enum SseEvent {
     CardMoved { card_id: String, from_stage: String, to_stage: String },
     CardDeleted { card_id: String },
     SubtaskToggled { card_id: String, subtask_id: String, completed: bool },
-    AiStatusChanged { card_id: String, status: String, progress: serde_json::Value },
+    AiStatusChanged { card_id: String, status: String, progress: serde_json::Value, stage: String, ai_session_id: Option<String> },
     AgentLogCreated { card_id: String, log: AgentLog },
 }
 

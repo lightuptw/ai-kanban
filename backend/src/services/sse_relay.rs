@@ -137,15 +137,29 @@ impl SseRelayService {
             return Ok(());
         };
 
-        let log = self
-            .create_agent_log(&card, session_id, event_type, properties)
-            .await?;
-        let log_event = SseEvent::AgentLogCreated {
-            card_id: card.id.clone(),
-            log,
+        let should_log = match event_type {
+            "message.part.updated" | "session.diff" | "server.connected" | "server.heartbeat" => {
+                false
+            }
+            "message.updated" => properties
+                .get("info")
+                .and_then(|info| info.get("finish"))
+                .and_then(Value::as_str)
+                .is_some(),
+            _ => true,
         };
-        if let Ok(payload) = serde_json::to_string(&log_event) {
-            let _ = self.sse_tx.send(payload);
+
+        if should_log {
+            let log = self
+                .create_agent_log(&card, session_id, event_type, properties)
+                .await?;
+            let log_event = SseEvent::AgentLogCreated {
+                card_id: card.id.clone(),
+                log,
+            };
+            if let Ok(payload) = serde_json::to_string(&log_event) {
+                let _ = self.sse_tx.send(payload);
+            }
         }
 
         let now = Utc::now().to_rfc3339();
@@ -298,6 +312,8 @@ impl SseRelayService {
             card_id: updated_card.id.clone(),
             status: updated_card.ai_status.clone(),
             progress: progress.clone(),
+            stage: updated_card.stage.clone(),
+            ai_session_id: updated_card.ai_session_id.clone(),
         };
 
         if let Ok(payload) = serde_json::to_string(&event) {

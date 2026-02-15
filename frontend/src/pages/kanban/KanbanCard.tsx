@@ -1,5 +1,6 @@
 import React from "react";
 import styled from "@emotion/styled";
+import { keyframes } from "@emotion/react";
 import { MessageCircle } from "react-feather";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -75,12 +76,38 @@ const TaskTitle = styled(Typography)`
   margin-right: ${(props) => props.theme.spacing(10)};
 `;
 
+const larsonSweep = keyframes`
+  0%, 100% { left: 0; }
+  50% { left: calc(100% - 20px); }
+`;
+
+const LarsonScanner = styled.div`
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 0 0 7px 7px;
+  &::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 100%;
+    background: #ff3300;
+    border-radius: 50%;
+    box-shadow: 0 0 6px 3px rgba(255, 51, 0, 0.6), 0 0 12px 6px rgba(255, 51, 0, 0.3);
+    animation: ${larsonSweep} 2s ease-in-out infinite;
+  }
+`;
+
 interface KanbanCardProps {
   id: string;
   title: string;
   badges?: string[];
   notifications?: number;
   avatars?: number[];
+  aiStatus?: string;
   onClick?: () => void;
 }
 
@@ -90,6 +117,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   badges = [],
   notifications = 0,
   avatars = [],
+  aiStatus,
   onClick,
 }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -135,6 +163,10 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
             <TaskNotificationsAmount>{notifications}</TaskNotificationsAmount>
             <MessageCircleIcon />
           </TaskNotifications>
+        )}
+
+        {(aiStatus === "planning" || aiStatus === "working" || aiStatus === "dispatched") && (
+          <LarsonScanner />
         )}
       </TaskWrapper>
     </div>

@@ -316,32 +316,32 @@ function KanbanBoard() {
           <Box sx={{ display: 'flex', flexWrap: 'nowrap', height: '100%', gap: '5px' }}>
             <Box sx={{ width: 250, minWidth: 250, height: '100%' }}>
               <Column id="backlog" title="Backlog" color={STAGE_COLORS.backlog} items={columns.backlog} showAddButton={true} onAddCard={handleAddCard}>
-                {columns.backlog.map((item) => (<KanbanCard key={item.id} {...item} onClick={() => handleCardClick(item.id)} />))}
+                {columns.backlog.map((item) => (<KanbanCard key={item.id} {...item} aiStatus={item.ai_status} onClick={() => handleCardClick(item.id)} />))}
               </Column>
             </Box>
             <Box sx={{ width: 250, minWidth: 250, height: '100%' }}>
               <Column id="plan" title="Plan" color={STAGE_COLORS.plan} items={columns.plan}>
-                {columns.plan.map((item) => (<KanbanCard key={item.id} {...item} onClick={() => handleCardClick(item.id)} />))}
+                {columns.plan.map((item) => (<KanbanCard key={item.id} {...item} aiStatus={item.ai_status} onClick={() => handleCardClick(item.id)} />))}
               </Column>
             </Box>
             <Box sx={{ width: 250, minWidth: 250, height: '100%' }}>
               <Column id="todo" title="Todo" color={STAGE_COLORS.todo} items={columns.todo}>
-                {columns.todo.map((item) => (<KanbanCard key={item.id} {...item} onClick={() => handleCardClick(item.id)} />))}
+                {columns.todo.map((item) => (<KanbanCard key={item.id} {...item} aiStatus={item.ai_status} onClick={() => handleCardClick(item.id)} />))}
               </Column>
             </Box>
             <Box sx={{ width: 250, minWidth: 250, height: '100%' }}>
               <Column id="in_progress" title="In Progress" color={STAGE_COLORS.in_progress} items={columns.in_progress}>
-                {columns.in_progress.map((item) => (<KanbanCard key={item.id} {...item} onClick={() => handleCardClick(item.id)} />))}
+                {columns.in_progress.map((item) => (<KanbanCard key={item.id} {...item} aiStatus={item.ai_status} onClick={() => handleCardClick(item.id)} />))}
               </Column>
             </Box>
             <Box sx={{ width: 250, minWidth: 250, height: '100%' }}>
               <Column id="review" title="Review" color={STAGE_COLORS.review} items={columns.review}>
-                {columns.review.map((item) => (<KanbanCard key={item.id} {...item} onClick={() => handleCardClick(item.id)} />))}
+                {columns.review.map((item) => (<KanbanCard key={item.id} {...item} aiStatus={item.ai_status} onClick={() => handleCardClick(item.id)} />))}
               </Column>
             </Box>
             <Box sx={{ width: 250, minWidth: 250, height: '100%' }}>
               <Column id="done" title="Done" color={STAGE_COLORS.done} items={columns.done}>
-                {columns.done.map((item) => (<KanbanCard key={item.id} {...item} onClick={() => handleCardClick(item.id)} />))}
+                {columns.done.map((item) => (<KanbanCard key={item.id} {...item} aiStatus={item.ai_status} onClick={() => handleCardClick(item.id)} />))}
               </Column>
             </Box>
           </Box>

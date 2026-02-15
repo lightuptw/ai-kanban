@@ -29,6 +29,11 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
                 .delete(handlers::cards::delete_card),
         )
         .route("/{id}/logs", get(handlers::cards::get_card_logs))
+        .route("/{id}/versions", get(handlers::cards::list_card_versions))
+        .route(
+            "/{id}/versions/{version_id}/restore",
+            post(handlers::cards::restore_card_version),
+        )
         .route("/{id}/move", patch(handlers::cards::move_card))
         .route("/{id}/generate-plan", post(handlers::cards::generate_plan))
         .route("/{id}/subtasks", post(handlers::subtasks::create_subtask))

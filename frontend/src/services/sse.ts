@@ -1,4 +1,4 @@
-import { updateCardFromSSE, removeCardFromSSE, fetchBoard } from "../store/slices/kanbanSlice";
+import { updateCardFromSSE, removeCardFromSSE, updateCardAiStatus, moveCardInStore } from "../store/slices/kanbanSlice";
 import type { AppDispatch } from "../redux/store";
 import type { Card } from "../types/kanban";
 
@@ -52,9 +52,20 @@ export class SSEManager {
     switch (event.type || event.event) {
       case "CardCreated":
       case "CardUpdated":
+        if (event.card) {
+          this.dispatch(updateCardFromSSE(event.card as Card));
+        }
+        break;
+
       case "CardMoved":
         if (event.card) {
           this.dispatch(updateCardFromSSE(event.card as Card));
+        } else if (event.card_id && event.from_stage && event.to_stage) {
+          this.dispatch(moveCardInStore({
+            cardId: event.card_id,
+            fromStage: event.from_stage,
+            toStage: event.to_stage,
+          }));
         }
         break;
 
@@ -66,8 +77,15 @@ export class SSEManager {
 
       case "aiStatusChanged":
       case "AiStatusChanged":
-        // Re-fetch the board to pick up card stage/status changes
-        this.dispatch(fetchBoard());
+        if (event.card_id && event.status) {
+          this.dispatch(updateCardAiStatus({
+            cardId: event.card_id,
+            status: event.status,
+            progress: event.progress,
+            stage: event.stage,
+            ai_session_id: event.ai_session_id,
+          }));
+        }
         break;
 
       default:

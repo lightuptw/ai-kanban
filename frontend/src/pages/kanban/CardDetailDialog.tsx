@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import styled from "@emotion/styled";
+import { keyframes } from "@emotion/react";
 import {
   Dialog,
   DialogTitle,
@@ -30,7 +31,6 @@ import {
   Delete as DeleteIcon,
   Edit as EditIcon,
   Check as CheckIcon,
-  Save as SaveIcon,
   Add as AddIcon,
   AutoFixHigh as AutoFixHighIcon,
   DragIndicator as DragIndicatorIcon,
@@ -52,7 +52,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { RootState, AppDispatch } from "../../redux/store";
-import type { Card } from "../../types/kanban";
+import type { CardVersion } from "../../types/kanban";
 import { updateCard, deleteCard, fetchBoard } from "../../store/slices/kanbanSlice";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { api } from "../../services/api";
@@ -75,6 +75,31 @@ const SectionTitle = styled(Typography)`
   margin-bottom: ${(props) => props.theme.spacing(2)};
 `;
 
+const miniLarsonSweep = keyframes`
+  0%, 100% { left: 0; }
+  50% { left: calc(100% - 16px); }
+`;
+
+const MiniLarsonScanner = styled.div`
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 0 0 4px 4px;
+  &::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 100%;
+    background: #ff3300;
+    border-radius: 50%;
+    box-shadow: 0 0 4px 2px rgba(255, 51, 0, 0.6), 0 0 8px 4px rgba(255, 51, 0, 0.3);
+    animation: ${miniLarsonSweep} 2s ease-in-out infinite;
+  }
+`;
+
 interface CardFile {
   id: string;
   card_id: string;
@@ -93,6 +118,15 @@ interface SubtaskItem {
   position: number;
   phase: string;
   phase_order: number;
+}
+
+interface CardSnapshot {
+  title?: string;
+  description?: string;
+  priority?: string;
+  stage?: string;
+  working_directory?: string;
+  linked_documents?: string;
 }
 
 const SortableSubtask: React.FC<{
@@ -156,6 +190,7 @@ interface CardDetailDialogProps {
 
 export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClose, cardId }) => {
   const columns = useSelector((state: RootState) => state.kanban.columns);
+  const activeBoardId = useSelector((state: RootState) => state.kanban.activeBoardId);
   const card = Object.values(columns)
     .flat()
     .find((c) => c.id === cardId);
@@ -180,9 +215,13 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const [editingCommentContent, setEditingCommentContent] = useState("");
   const [editingPhaseName, setEditingPhaseName] = useState<string | null>(null);
   const [editingPhaseValue, setEditingPhaseValue] = useState("");
+  const [versions, setVersions] = useState<CardVersion[]>([]);
+  const [showVersions, setShowVersions] = useState(false);
 
   useEffect(() => {
     if (card) {
+      setVersions([]);
+      setShowVersions(false);
       setTitle(card.title);
       setDescription(card.description || "");
       setPriority(card.priority);
@@ -207,7 +246,35 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         })
         .catch((err) => console.error("Failed to fetch card details:", err));
     }
-  }, [card]);
+  }, [card?.id]);
+
+  const handleToggleVersions = async () => {
+    if (!card) return;
+    if (!showVersions) {
+      try {
+        const data = await api.getCardVersions(card.id);
+        setVersions(data);
+      } catch (err) {
+        console.error("Failed to fetch card versions:", err);
+      }
+    }
+    setShowVersions(!showVersions);
+  };
+
+  const handleRestore = async (versionId: string) => {
+    if (!card || !window.confirm("Restore this version? Current state will be saved as a new version.")) {
+      return;
+    }
+
+    try {
+      await api.restoreCardVersion(card.id, versionId);
+      const data = await api.getCardVersions(card.id);
+      setVersions(data);
+      dispatch(fetchBoard(activeBoardId || undefined));
+    } catch (err) {
+      console.error("Failed to restore card version:", err);
+    }
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = event.target.files;
@@ -244,7 +311,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     }
   };
 
-  const handleFileDownload = (fileId: string, filename: string) => {
+  const handleFileDownload = (fileId: string) => {
     window.open(`${API_BASE_URL}/api/files/${fileId}`, "_blank");
   };
 
@@ -287,7 +354,6 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     const maxOrder = phases.length > 0 ? Math.max(...phases.map(p => p.order)) : 0;
     setSubtasks([...subtasks]);
     setNewPhaseName("");
-    const fakePhase = { name, order: maxOrder + 1, tasks: [] as SubtaskItem[] };
     setSubtasks(prev => {
       const temp: SubtaskItem = { id: `_placeholder_${Date.now()}`, card_id: card?.id || "", title: "", completed: false, position: 0, phase: name, phase_order: maxOrder + 1 };
       return [...prev, temp];
@@ -454,15 +520,13 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const handleGeneratePlan = async () => {
     try {
       await api.generatePlan(cardId);
-      dispatch(fetchBoard());
+      // SSE AiStatusChanged event will update the card in-place via updateCardAiStatus
     } catch (err) {
       console.error("Failed to generate plan:", err);
     }
   };
 
   if (!card) return null;
-
-  const subtaskProgress = card.subtask_count > 0 ? (card.subtask_completed / card.subtask_count) * 100 : 0;
 
   let aiProgress: any = {};
   try {
@@ -498,7 +562,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         <Section>
           <FormControl fullWidth size="small">
             <InputLabel>Priority</InputLabel>
-            <Select value={priority} onChange={(e) => setPriority(e.target.value)} label="Priority">
+            <Select value={priority} onChange={(e) => { setPriority(e.target.value); dispatch(updateCard({ id: card.id, data: { priority: e.target.value } })); }} label="Priority">
               <MenuItem value="low">Low</MenuItem>
               <MenuItem value="medium">Medium</MenuItem>
               <MenuItem value="high">High</MenuItem>
@@ -511,7 +575,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           <Section>
             <FormControl fullWidth size="small">
               <InputLabel>AI Agent</InputLabel>
-              <Select value={aiAgent} onChange={(e) => setAiAgent(e.target.value)} label="AI Agent">
+              <Select value={aiAgent} onChange={(e) => { setAiAgent(e.target.value); dispatch(updateCard({ id: card.id, data: { ai_agent: e.target.value } })); }} label="AI Agent">
                 <MenuItem value="">Auto (default)</MenuItem>
                 <MenuItem value="sisyphus">sisyphus</MenuItem>
                 <MenuItem value="hephaestus">hephaestus</MenuItem>
@@ -571,7 +635,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           {phases.map((phase, phaseIdx) => {
             const realTasks = phase.tasks.filter(t => !t.id.startsWith("_placeholder_"));
             return (
-              <Paper key={phase.name} variant="outlined" sx={{ mb: 2, p: 1.5 }}>
+              <Paper key={phase.name} variant="outlined" sx={{ mb: 2, p: 1.5, position: 'relative', overflow: 'hidden' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                   {editingPhaseName === phase.name ? (
                     <TextField
@@ -636,6 +700,9 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                   />
                   <Button variant="outlined" size="small" onClick={() => handleAddSubtask(phase.name, phase.order)}>+</Button>
                 </Box>
+                {(card.ai_status === "planning" || card.ai_status === "working") && (
+                  <MiniLarsonScanner />
+                )}
               </Paper>
             );
           })}
@@ -672,7 +739,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 <ListItemText
                   primary={file.original_filename}
                   secondary={`${(file.file_size / 1024).toFixed(2)} KB - ${new Date(file.uploaded_at).toLocaleDateString()}`}
-                  onClick={() => handleFileDownload(file.id, file.original_filename)}
+                  onClick={() => handleFileDownload(file.id)}
                   sx={{ cursor: "pointer" }}
                 />
               </ListItem>
@@ -804,10 +871,10 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           </Section>
         )}
 
-        {card && (card.ai_session_id || card.ai_status !== 'idle') && (
+        {card && ['plan', 'todo', 'in_progress'].includes(card.stage) && (
           <Section>
             <SectionTitle variant="subtitle1">AI Agent Logs</SectionTitle>
-            <AgentLogViewer cardId={card.id} sessionId={card.ai_session_id} />
+            <AgentLogViewer cardId={card.id} sessionId={card.ai_session_id} aiStatus={card.ai_status} />
           </Section>
         )}
 
@@ -893,14 +960,64 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
             Add Comment
           </Button>
         </Section>
+
+        <Section>
+          <SectionTitle variant="subtitle1">Version History</SectionTitle>
+          <Button size="small" onClick={handleToggleVersions} sx={{ mb: 1 }}>
+            {showVersions ? "Hide" : "Show"} Version History ({versions.length})
+          </Button>
+          {showVersions && (
+            <List
+              dense
+              sx={{
+                bgcolor: "background.paper",
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                maxHeight: 200,
+                overflow: "auto",
+              }}
+            >
+              {versions.map((version) => {
+                let snapshot: CardSnapshot = {};
+                try {
+                  snapshot = JSON.parse(version.snapshot) as CardSnapshot;
+                } catch {
+                  snapshot = {};
+                }
+
+                return (
+                  <ListItem
+                    key={version.id}
+                    secondaryAction={
+                      <Button size="small" onClick={() => handleRestore(version.id)}>
+                        Restore
+                      </Button>
+                    }
+                  >
+                    <ListItemText
+                      primary={`${new Date(version.created_at).toLocaleString()} (${version.changed_by})`}
+                      secondary={`Title: ${snapshot.title || ""}, Priority: ${snapshot.priority || ""}`}
+                    />
+                  </ListItem>
+                );
+              })}
+              {versions.length === 0 && (
+                <ListItem>
+                  <ListItemText primary="No versions yet" />
+                </ListItem>
+              )}
+            </List>
+          )}
+        </Section>
       </DialogContent>
 
       <DialogActions sx={{ justifyContent: "space-between", p: 2 }}>
         <Button startIcon={<DeleteIcon />} color="error" onClick={handleDelete}>
           Delete
         </Button>
-        <Button startIcon={<SaveIcon />} variant="contained" onClick={() => { handleSave(); onClose(); }}>
-          Save
+        <Button variant="contained" onClick={() => { handleSave(); onClose(); }}>
+          Close
         </Button>
       </DialogActions>
     </Dialog>

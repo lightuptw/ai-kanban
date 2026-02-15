@@ -51,6 +51,8 @@ impl QueueProcessor {
                         card_id: card.id.clone(),
                         status: "dispatched".to_string(),
                         progress: json!({}),
+                        stage: card.stage.clone(),
+                        ai_session_id: card.ai_session_id.clone(),
                     };
                     if let Ok(payload) = serde_json::to_string(&event) {
                         let _ = self.sse_tx.send(payload);
@@ -191,10 +193,17 @@ impl QueueProcessor {
             .execute(&self.db)
             .await?;
 
+        let card: Option<Card> = sqlx::query_as("SELECT * FROM cards WHERE id = ?")
+            .bind(card_id)
+            .fetch_optional(&self.db)
+            .await?;
+
         let event = SseEvent::AiStatusChanged {
             card_id: card_id.to_string(),
             status: "failed".to_string(),
             progress: json!({}),
+            stage: card.as_ref().map(|c| c.stage.clone()).unwrap_or_default(),
+            ai_session_id: card.and_then(|c| c.ai_session_id),
         };
         if let Ok(payload) = serde_json::to_string(&event) {
             let _ = self.sse_tx.send(payload);

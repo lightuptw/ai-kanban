@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import styled from "@emotion/styled";
+import { keyframes } from "@emotion/react";
 import { Box, Typography, Chip, CircularProgress } from "@mui/material";
 import { api } from "../../services/api";
 import type { AgentLog } from "../../types/kanban";
@@ -7,6 +8,7 @@ import type { AgentLog } from "../../types/kanban";
 interface AgentLogViewerProps {
   cardId: string;
   sessionId: string | null;
+  aiStatus?: string;
 }
 
 const LogContainer = styled(Box)`
@@ -81,6 +83,20 @@ const AGENT_COLORS: Record<string, string> = {
   hephaestus: "#ef5350",
   metis: "#aed581",
   momus: "#ff8a65",
+};
+
+const statusPulse = keyframes`
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+`;
+
+const AI_STATUS_CONFIG: Record<string, { color: string; bg: string; pulse: boolean }> = {
+  planning: { color: "#42a5f5", bg: "rgba(66, 165, 245, 0.15)", pulse: true },
+  working: { color: "#ffa726", bg: "rgba(255, 167, 38, 0.15)", pulse: true },
+  dispatched: { color: "#ffee58", bg: "rgba(255, 238, 88, 0.15)", pulse: false },
+  completed: { color: "#66bb6a", bg: "rgba(102, 187, 106, 0.15)", pulse: false },
+  failed: { color: "#ef5350", bg: "rgba(239, 83, 80, 0.15)", pulse: false },
+  idle: { color: "#90a4ae", bg: "rgba(144, 164, 174, 0.15)", pulse: false },
 };
 
 function getAgentColor(agent: string): string {
@@ -161,6 +177,7 @@ function processLogs(logs: AgentLog[]): DisplayEntry[] {
 export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
   cardId,
   sessionId,
+  aiStatus,
 }) => {
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,17 +293,36 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
         <Typography variant="caption" color="text.secondary">
           {sessionId && `Session: ${sessionId.slice(0, 8)}...`}
         </Typography>
-        <Chip
-          size="small"
-          label={connected ? "Connected" : "Disconnected"}
-          sx={{
-            bgcolor: connected ? "rgba(76, 175, 80, 0.15)" : "rgba(244, 67, 54, 0.15)",
-            color: connected ? "#66bb6a" : "#ef5350",
-            fontWeight: 600,
-            fontSize: 11,
-            height: 24,
-          }}
-        />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {(() => {
+            const statusKey = aiStatus || "idle";
+            const config = AI_STATUS_CONFIG[statusKey] || AI_STATUS_CONFIG.idle;
+            return (
+              <Chip
+                size="small"
+                label={statusKey}
+                sx={{
+                  bgcolor: config.bg,
+                  color: config.color,
+                  fontWeight: 600,
+                  fontSize: 11,
+                  height: 22,
+                  animation: config.pulse ? `${statusPulse} 2s ease-in-out infinite` : 'none',
+                }}
+              />
+            );
+          })()}
+          <Box
+            title={connected ? "WS Connected" : "WS Disconnected"}
+            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              bgcolor: connected ? "#66bb6a" : "#ef5350",
+              flexShrink: 0,
+            }}
+          />
+        </Box>
       </StatusBar>
 
       <LogContainer ref={containerRef} onScroll={handleScroll}>
