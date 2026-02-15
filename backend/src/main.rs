@@ -36,6 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = match db::init_db(&config.database_url).await {
         Ok(pool) => {
             tracing::info!("Database initialized successfully");
+
+            if let Err(e) = kanban_backend::auth::seed::seed_default_user(&pool).await {
+                tracing::warn!("Failed to seed default user: {}", e);
+            }
+
             Some(pool)
         }
         Err(e) => {

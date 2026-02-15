@@ -22,16 +22,44 @@ import type {
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3000`;
+  `${window.location.protocol}//${window.location.hostname}:21547`;
 
-async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+function buildHeaders(options?: RequestInit, token?: string | null): Headers {
+  const headers = new Headers(options?.headers);
+  headers.set("Content-Type", "application/json");
+
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  return headers;
+}
+
+async function fetchAPI<T>(endpoint: string, options?: RequestInit, isRetry = false): Promise<T> {
+  const token = localStorage.getItem("token");
+
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers: buildHeaders(options, token),
   });
+
+  if (response.status === 401 && !isRetry && token) {
+    try {
+      const { authService } = await import("./auth");
+      const newToken = await authService.refresh();
+
+      if (newToken) {
+        return fetchAPI<T>(endpoint, {
+          ...options,
+          headers: buildHeaders(options, newToken),
+        }, true);
+      }
+    } catch {
+      const { authService } = await import("./auth");
+      authService.logout();
+      throw new Error("Unauthorized");
+    }
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));

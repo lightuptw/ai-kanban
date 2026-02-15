@@ -10,6 +10,9 @@ pub enum KanbanError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -25,6 +28,7 @@ impl IntoResponse for KanbanError {
         let (status, message) = match &self {
             KanbanError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             KanbanError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            KanbanError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             KanbanError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             KanbanError::OpenCodeError(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             KanbanError::Database(err) => {

@@ -4,7 +4,7 @@ import type { Card } from "../types/kanban";
 
 const SSE_URL =
   (import.meta.env.VITE_API_URL ||
-    `${window.location.protocol}//${window.location.hostname}:3000`) +
+    `${window.location.protocol}//${window.location.hostname}:21547`) +
   "/api/events";
 
 export class SSEManager {
@@ -22,8 +22,15 @@ export class SSEManager {
       this.eventSource.close();
     }
 
-    console.log("[SSE] Connecting to", SSE_URL);
-    this.eventSource = new EventSource(SSE_URL);
+    const token = localStorage.getItem("token") || "";
+    if (!token) {
+      console.log("[SSE] No auth token, skipping connection");
+      return;
+    }
+    const sseUrl = `${SSE_URL}?token=${encodeURIComponent(token)}`;
+
+    console.log("[SSE] Connecting to", sseUrl);
+    this.eventSource = new EventSource(sseUrl);
 
     this.eventSource.onopen = () => {
       console.log("[SSE] Connected");

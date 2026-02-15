@@ -7,6 +7,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::api::handlers;
 use crate::api::state::AppState;
+use crate::auth;
 use crate::config::Config;
 
 pub fn create_router(state: AppState, config: &Config) -> Router {
@@ -86,14 +87,20 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         get(handlers::files::download_file).delete(handlers::files::delete_file),
     );
 
-    let api_routes = Router::new()
+    let public_routes = Router::new()
         .route("/health", get(handlers::health_check))
         .route("/health/live", get(handlers::liveness))
+        .route("/api/auth/register", post(auth::handlers::register))
+        .route("/api/auth/login", post(auth::handlers::login))
+        .route("/api/auth/refresh", post(auth::handlers::refresh));
+
+    let protected_routes = Router::new()
         .route(
             "/api/pick-directory",
             post(handlers::picker::pick_directory),
         )
         .route("/api/pick-files", post(handlers::picker::pick_files))
+        .route("/api/auth/me", get(auth::handlers::me))
         .route("/api/events", get(handlers::sse::sse_handler))
         .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))
         .route("/api/board", get(handlers::cards::get_board))
@@ -107,6 +114,14 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             "/api/settings/{key}",
             get(handlers::settings::get_setting).put(handlers::settings::set_setting),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::middleware::auth_middleware,
+        ));
+
+    let api_routes = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
