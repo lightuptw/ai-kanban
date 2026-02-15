@@ -17,6 +17,7 @@ pub struct Card {
     pub linked_documents: String,
     pub created_at: String,
     pub updated_at: String,
+    pub ai_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

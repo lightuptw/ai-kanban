@@ -2,7 +2,10 @@ import { updateCardFromSSE, removeCardFromSSE, fetchBoard } from "../store/slice
 import type { AppDispatch } from "../redux/store";
 import type { Card } from "../types/kanban";
 
-const SSE_URL = (import.meta.env.VITE_API_URL || "http://localhost:3000") + "/api/events";
+const SSE_URL =
+  (import.meta.env.VITE_API_URL ||
+    `${window.location.protocol}//${window.location.hostname}:3000`) +
+  "/api/events";
 
 export class SSEManager {
   private eventSource: EventSource | null = null;

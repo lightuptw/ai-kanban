@@ -33,6 +33,8 @@ pub struct UpdateCardRequest {
     pub working_directory: Option<String>,
     #[serde(default)]
     pub linked_documents: Option<String>,
+    #[serde(default)]
+    pub ai_agent: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +60,7 @@ pub struct CardResponse {
     pub linked_documents: String,
     pub created_at: String,
     pub updated_at: String,
+    pub ai_agent: Option<String>,
     pub subtasks: Vec<Subtask>,
     pub labels: Vec<Label>,
     pub comments: Vec<Comment>,
@@ -86,6 +89,7 @@ impl CardResponse {
             linked_documents: card.linked_documents,
             created_at: card.created_at,
             updated_at: card.updated_at,
+            ai_agent: card.ai_agent,
             subtasks,
             labels,
             comments,
@@ -102,6 +106,7 @@ pub struct CardSummary {
     pub position: i64,
     pub priority: String,
     pub ai_status: String,
+    pub ai_agent: Option<String>,
     pub subtask_count: i64,
     pub subtask_completed: i64,
     pub label_count: i64,

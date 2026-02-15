@@ -10,13 +10,13 @@ use crate::api::state::AppState;
 use crate::config::Config;
 
 pub fn create_router(state: AppState, config: &Config) -> Router {
+    let origins: Vec<HeaderValue> = config
+        .cors_origin
+        .split(',')
+        .filter_map(|s| s.trim().parse::<HeaderValue>().ok())
+        .collect();
     let cors = CorsLayer::new()
-        .allow_origin(
-            config
-                .cors_origin
-                .parse::<HeaderValue>()
-                .expect("Invalid CORS origin"),
-        )
+        .allow_origin(origins)
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 

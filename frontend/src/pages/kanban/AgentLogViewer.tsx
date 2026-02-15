@@ -214,7 +214,7 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
         window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsHost = import.meta.env.VITE_API_URL
         ? new URL(import.meta.env.VITE_API_URL as string).host
-        : "localhost:3000";
+        : `${window.location.hostname}:3000`;
       const wsUrl = `${wsProtocol}//${wsHost}/ws/logs/${cardId}`;
 
       const ws = new WebSocket(wsUrl);

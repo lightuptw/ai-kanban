@@ -19,6 +19,7 @@ const mockCard: Card = {
   ai_status: "idle",
   ai_progress: "{}",
   linked_documents: "[]",
+  ai_agent: null,
   created_at: "2026-02-14T00:00:00Z",
   updated_at: "2026-02-14T00:00:00Z",
   subtask_count: 0,

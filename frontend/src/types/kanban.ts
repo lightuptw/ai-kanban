@@ -39,6 +39,7 @@ export interface Card {
   linked_documents: string;
   created_at: string;
   updated_at: string;
+  ai_agent: string | null;
   subtask_count: number;
   subtask_completed: number;
   label_count: number;
@@ -69,6 +70,7 @@ export interface UpdateCardRequest {
   priority?: string;
   working_directory?: string;
   linked_documents?: string;
+  ai_agent?: string | null;
 }
 
 export interface MoveCardRequest {

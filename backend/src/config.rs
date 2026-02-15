@@ -23,7 +23,7 @@ impl Config {
             frontend_dir: std::env::var("FRONTEND_DIR")
                 .unwrap_or_else(|_| "../frontend/dist".into()),
             cors_origin: std::env::var("CORS_ORIGIN")
-                .unwrap_or_else(|_| "http://localhost:5173".into()),
+                .unwrap_or_else(|_| "http://localhost:5173,http://127.0.0.1:5173".into()),
         })
     }
 }
@@ -35,7 +35,7 @@ impl Default for Config {
             database_url: "sqlite:kanban.db".into(),
             opencode_url: "http://localhost:4096".into(),
             frontend_dir: "../frontend/dist".into(),
-            cors_origin: "http://localhost:5173".into(),
+            cors_origin: "http://localhost:5173,http://127.0.0.1:5173".into(),
         }
     }
 }

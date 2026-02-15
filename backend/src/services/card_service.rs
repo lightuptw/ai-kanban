@@ -100,7 +100,7 @@ impl CardService {
             r#"
             SELECT
                 c.id, c.title, c.description, c.stage, c.position, c.priority,
-                c.ai_status, c.created_at, c.updated_at,
+                c.ai_status, c.ai_agent, c.created_at, c.updated_at,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id), 0) as subtask_count,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id AND s.completed = 1), 0) as subtask_completed,
                 COALESCE((SELECT COUNT(*) FROM card_labels cl WHERE cl.card_id = c.id), 0) as label_count,
@@ -113,7 +113,7 @@ impl CardService {
             r#"
             SELECT
                 c.id, c.title, c.description, c.stage, c.position, c.priority,
-                c.ai_status, c.created_at, c.updated_at,
+                c.ai_status, c.ai_agent, c.created_at, c.updated_at,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id), 0) as subtask_count,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id AND s.completed = 1), 0) as subtask_completed,
                 COALESCE((SELECT COUNT(*) FROM card_labels cl WHERE cl.card_id = c.id), 0) as label_count,
@@ -148,6 +148,7 @@ impl CardService {
                 position: row.get("position"),
                 priority: row.get("priority"),
                 ai_status: row.get("ai_status"),
+                ai_agent: row.get("ai_agent"),
                 subtask_count: row.get("subtask_count"),
                 subtask_completed: row.get("subtask_completed"),
                 label_count: row.get("label_count"),
@@ -189,13 +190,18 @@ impl CardService {
         let priority = req.priority.unwrap_or(existing.priority);
         let working_directory = req.working_directory.unwrap_or(existing.working_directory);
         let linked_documents = req.linked_documents.unwrap_or(existing.linked_documents);
+        let ai_agent = match &req.ai_agent {
+            Some(s) if s.is_empty() => None,
+            Some(s) => Some(s.clone()),
+            None => existing.ai_agent,
+        };
 
         stage
             .parse::<Stage>()
             .map_err(|e| KanbanError::BadRequest(e))?;
 
         sqlx::query(
-            "UPDATE cards SET title = ?, description = ?, stage = ?, position = ?, priority = ?, working_directory = ?, linked_documents = ?, updated_at = ? WHERE id = ?",
+            "UPDATE cards SET title = ?, description = ?, stage = ?, position = ?, priority = ?, working_directory = ?, linked_documents = ?, ai_agent = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&title)
         .bind(&description)
@@ -204,6 +210,7 @@ impl CardService {
         .bind(&priority)
         .bind(&working_directory)
         .bind(&linked_documents)
+        .bind(&ai_agent)
         .bind(&now)
         .bind(id)
         .execute(pool)

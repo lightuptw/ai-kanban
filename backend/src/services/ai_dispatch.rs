@@ -100,9 +100,14 @@ impl AiDispatchService {
         // Send the work plan message in a background task.
         // The /session/{id}/message endpoint is synchronous (blocks until AI finishes),
         // so we fire-and-forget. The SSE relay will track progress via opencode events.
+        let agent_instruction = if let Some(agent) = &card.ai_agent {
+            format!("You are acting as the {} agent. ", agent)
+        } else {
+            String::new()
+        };
         let prompt = format!(
-            "A work plan has been generated at {}. Read it carefully, then execute /start-work to begin. Work through ALL TODOs systematically.",
-            plan_path
+            "{}A work plan has been generated at {}. Read it carefully, then execute /start-work to begin. Work through ALL TODOs systematically.",
+            agent_instruction, plan_path
         );
         let http_client = self.http_client.clone();
         let message_url = format!("{}/session/{}/message", self.opencode_url, &session_id);
