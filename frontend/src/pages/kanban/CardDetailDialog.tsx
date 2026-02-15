@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import styled from "@emotion/styled";
 import { keyframes } from "@emotion/react";
@@ -25,6 +25,8 @@ import {
   Divider,
   Paper,
   CircularProgress,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import {
   Close as CloseIcon,
@@ -218,6 +220,8 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const [editingPhaseValue, setEditingPhaseValue] = useState("");
   const [versions, setVersions] = useState<CardVersion[]>([]);
   const [showVersions, setShowVersions] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const loadedCardRef = useRef<{ title: string; description: string; working_directory: string; linked_documents: string; ai_agent: string } | null>(null);
 
   useEffect(() => {
     if (card) {
@@ -229,6 +233,13 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
       setAiAgent(card.ai_agent || "");
       setWorkingDir(card.working_directory || ".");
       setLinkedDocs(card.linked_documents || "");
+      loadedCardRef.current = {
+        title: card.title,
+        description: card.description || "",
+        working_directory: card.working_directory || ".",
+        linked_documents: card.linked_documents || "",
+        ai_agent: card.ai_agent || "",
+      };
       
       fetch(`${API_BASE_URL}/api/cards/${card.id}/files`)
         .then((res) => res.json())
@@ -248,6 +259,41 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         .catch((err) => console.error("Failed to fetch card details:", err));
     }
   }, [card?.id]);
+
+  useEffect(() => {
+    if (!card || !loadedCardRef.current) {
+      return;
+    }
+
+    const baselineValues = loadedCardRef.current;
+    const currentValues = { title, description, working_directory: workingDir, linked_documents: linkedDocs, ai_agent: aiAgent };
+
+    if (
+      currentValues.title === baselineValues.title &&
+      currentValues.description === baselineValues.description &&
+      currentValues.working_directory === baselineValues.working_directory &&
+      currentValues.linked_documents === baselineValues.linked_documents &&
+      currentValues.ai_agent === baselineValues.ai_agent
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) {
+        dispatch(updateCard({
+          id: card.id,
+          data: { title, description, priority, working_directory: workingDir, linked_documents: linkedDocs, ai_agent: aiAgent || "" },
+        }));
+        loadedCardRef.current = currentValues;
+      }
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [card, title, description, workingDir, linkedDocs, aiAgent, priority, dispatch]);
 
   const handleToggleVersions = async () => {
     if (!card) return;
@@ -502,14 +548,6 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     }
   };
 
-  const handleSave = () => {
-    if (!card) return;
-    dispatch(updateCard({
-      id: card.id,
-      data: { title, description, priority, working_directory: workingDir, linked_documents: linkedDocs, ai_agent: aiAgent || "" },
-    }));
-  };
-
   const handleDelete = () => {
     if (!card) return;
     if (confirm("Are you sure you want to delete this card?")) {
@@ -518,23 +556,25 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     }
   };
 
-  const handleGeneratePlan = async () => {
-    try {
-      await api.generatePlan(cardId);
-    } catch (err) {
-      console.error("Failed to generate plan:", err);
-    }
-  };
+   const handleGeneratePlan = async () => {
+     try {
+       await api.generatePlan(cardId);
+     } catch (err) {
+       console.error("Failed to generate plan:", err);
+       setErrorMessage("Failed to generate plan. Is opencode running?");
+     }
+   };
 
   const isAiActive = card?.ai_status && ["planning", "dispatched", "working", "queued"].includes(card.ai_status);
 
-  const handleStopAi = async () => {
-    try {
-      await api.stopAi(cardId);
-    } catch (err) {
-      console.error("Failed to stop AI:", err);
-    }
-  };
+   const handleStopAi = async () => {
+     try {
+       await api.stopAi(cardId);
+     } catch (err) {
+       console.error("Failed to stop AI:", err);
+       setErrorMessage("Failed to stop AI.");
+     }
+   };
 
   if (!card) return null;
 
@@ -549,22 +589,21 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const aiProgressPercent = aiTotalTodos > 0 ? (aiCompletedTodos / aiTotalTodos) * 100 : 0;
 
   return (
-    <Dialog open={open} onClose={() => { handleSave(); onClose(); }} maxWidth={false} PaperProps={{ sx: { width: '80vw', maxWidth: '80vw' } }}>
+    <Dialog open={open} onClose={onClose} maxWidth={false} PaperProps={{ sx: { width: '80vw', maxWidth: '80vw' } }}>
       <DialogHeader>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
           <TextField
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            onBlur={handleSave}
             variant="standard"
             fullWidth
             inputProps={{ style: { fontSize: '1.8rem', fontWeight: 600 } }}
           />
           <Chip label={card.stage} color="primary" size="small" />
         </Box>
-        <IconButton onClick={() => { handleSave(); onClose(); }}>
-          <CloseIcon />
-        </IconButton>
+         <IconButton onClick={onClose}>
+           <CloseIcon />
+         </IconButton>
       </DialogHeader>
 
       <DialogContent dividers>
@@ -600,19 +639,18 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
           </Section>
         )}
 
-        {/* Description */}
-        <Section>
-          <SectionTitle variant="subtitle1">Description</SectionTitle>
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onBlur={handleSave}
-            placeholder="Add description..."
-          />
-        </Section>
+         {/* Description */}
+         <Section>
+           <SectionTitle variant="subtitle1">Description</SectionTitle>
+           <TextField
+             fullWidth
+             multiline
+             rows={4}
+             value={description}
+             onChange={(e) => setDescription(e.target.value)}
+             placeholder="Add description..."
+           />
+         </Section>
 
         {card?.stage === 'plan' && (
           <Section>
@@ -1055,14 +1093,25 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         </Section>
       </DialogContent>
 
-      <DialogActions sx={{ justifyContent: "space-between", p: 2 }}>
-        <Button startIcon={<DeleteIcon />} color="error" onClick={handleDelete}>
-          Delete
-        </Button>
-        <Button variant="contained" onClick={() => { handleSave(); onClose(); }}>
-          Close
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-};
+       <DialogActions sx={{ justifyContent: "space-between", p: 2 }}>
+         <Button startIcon={<DeleteIcon />} color="error" onClick={handleDelete}>
+           Delete
+         </Button>
+         <Button variant="contained" onClick={onClose}>
+           Close
+         </Button>
+       </DialogActions>
+
+       <Snackbar
+         open={!!errorMessage}
+         autoHideDuration={5000}
+         onClose={() => setErrorMessage(null)}
+         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+       >
+         <Alert onClose={() => setErrorMessage(null)} severity="error" sx={{ width: "100%" }}>
+           {errorMessage}
+         </Alert>
+       </Snackbar>
+     </Dialog>
+   );
+ };
