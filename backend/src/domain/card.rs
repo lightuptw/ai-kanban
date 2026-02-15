@@ -47,3 +47,15 @@ pub struct Comment {
     pub content: String,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AgentLog {
+    pub id: String,
+    pub card_id: String,
+    pub session_id: String,
+    pub event_type: String,
+    pub agent: Option<String>,
+    pub content: String,
+    pub metadata: String,
+    pub created_at: String,
+}

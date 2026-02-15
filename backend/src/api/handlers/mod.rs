@@ -7,6 +7,7 @@ pub mod picker;
 pub mod settings;
 pub mod sse;
 pub mod subtasks;
+pub mod ws;
 
 use axum::http::StatusCode;
 use axum::Json;

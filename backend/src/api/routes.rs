@@ -28,6 +28,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
                 .patch(handlers::cards::update_card)
                 .delete(handlers::cards::delete_card),
         )
+        .route("/{id}/logs", get(handlers::cards::get_card_logs))
         .route("/{id}/move", patch(handlers::cards::move_card))
         .route("/{id}/subtasks", post(handlers::subtasks::create_subtask))
         .route(
@@ -78,6 +79,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         )
         .route("/api/pick-files", post(handlers::picker::pick_files))
         .route("/api/events", get(handlers::sse::sse_handler))
+        .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))
         .route("/api/board", get(handlers::cards::get_board))
         .route("/api/labels", get(handlers::labels::list_labels))
         .nest("/api/boards", board_routes)

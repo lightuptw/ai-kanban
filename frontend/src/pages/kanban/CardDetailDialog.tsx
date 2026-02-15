@@ -52,6 +52,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { RootState, AppDispatch } from "../../redux/store";
 import type { Card } from "../../types/kanban";
 import { updateCard, deleteCard } from "../../store/slices/kanbanSlice";
+import { AgentLogViewer } from "./AgentLogViewer";
 
 const DialogHeader = styled(DialogTitle)`
   display: flex;
@@ -747,6 +748,13 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 Plan: <a href={`file://${card.plan_path}`}>{card.plan_path}</a>
               </Typography>
             )}
+          </Section>
+        )}
+
+        {card && (card.ai_session_id || card.ai_status !== 'idle') && (
+          <Section>
+            <SectionTitle variant="subtitle1">AI Agent Logs</SectionTitle>
+            <AgentLogViewer cardId={card.id} sessionId={card.ai_session_id} />
           </Section>
         )}
 

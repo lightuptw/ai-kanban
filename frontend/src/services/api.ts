@@ -14,6 +14,7 @@ import type {
   CreateBoardRequest,
   UpdateBoardRequest,
   ReorderBoardRequest,
+  AgentLog,
 } from "../types/kanban";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -106,6 +107,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+
+  getCardLogs: (cardId: string) => fetchAPI<AgentLog[]>(`/api/cards/${cardId}/logs`),
 
   // Boards
   listBoards: () => fetchAPI<Board[]>("/api/boards"),

@@ -7,9 +7,10 @@ use reqwest_eventsource::{Event, EventSource};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use crate::api::handlers::sse::SseEvent;
-use crate::domain::Card;
+use crate::domain::{AgentLog, Card};
 
 use super::CardService;
 
@@ -135,6 +136,17 @@ impl SseRelayService {
             tracing::debug!(session_id, "Ignoring OpenCode event for unknown session");
             return Ok(());
         };
+
+        let log = self
+            .create_agent_log(&card, session_id, event_type, properties)
+            .await?;
+        let log_event = SseEvent::AgentLogCreated {
+            card_id: card.id.clone(),
+            log,
+        };
+        if let Ok(payload) = serde_json::to_string(&log_event) {
+            let _ = self.sse_tx.send(payload);
+        }
 
         let now = Utc::now().to_rfc3339();
 
@@ -311,5 +323,119 @@ impl SseRelayService {
             .unwrap_or(json!({}));
 
         Some((event_type, properties))
+    }
+
+    async fn create_agent_log(
+        &self,
+        card: &Card,
+        session_id: &str,
+        event_type: &str,
+        properties: &Value,
+    ) -> Result<AgentLog> {
+        let id = Uuid::new_v4().to_string();
+        let created_at = Utc::now().to_rfc3339();
+        let agent = properties
+            .get("info")
+            .and_then(|info| info.get("agent"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let content = Self::build_log_content(event_type, properties, agent.as_deref());
+        let metadata = properties.to_string();
+
+        sqlx::query(
+            "INSERT INTO agent_logs (id, card_id, session_id, event_type, agent, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&card.id)
+        .bind(session_id)
+        .bind(event_type)
+        .bind(agent.as_deref())
+        .bind(&content)
+        .bind(&metadata)
+        .bind(&created_at)
+        .execute(&self.db)
+        .await?;
+
+        Ok(AgentLog {
+            id,
+            card_id: card.id.clone(),
+            session_id: session_id.to_string(),
+            event_type: event_type.to_string(),
+            agent,
+            content,
+            metadata,
+            created_at,
+        })
+    }
+
+    fn build_log_content(event_type: &str, properties: &Value, agent: Option<&str>) -> String {
+        match event_type {
+            "message.part.delta" => properties
+                .get("delta")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            "message.updated" => {
+                let finish = properties
+                    .get("info")
+                    .and_then(|info| info.get("finish"))
+                    .and_then(Value::as_str);
+                if let Some(finish_reason) = finish {
+                    format!(
+                        "Agent {} finished ({})",
+                        agent.unwrap_or("unknown"),
+                        finish_reason
+                    )
+                } else {
+                    format!("Agent {} updated message", agent.unwrap_or("unknown"))
+                }
+            }
+            "session.status" => {
+                let status_type = properties
+                    .get("status")
+                    .and_then(|s| s.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                format!("Session {}", status_type)
+            }
+            "session.idle" => "Session completed".to_string(),
+            "todo.updated" => Self::summarize_todos(properties),
+            _ => format!("Event {}", event_type),
+        }
+    }
+
+    fn summarize_todos(properties: &Value) -> String {
+        let Some(todos) = properties.get("todos").and_then(Value::as_array) else {
+            return "Todo list updated".to_string();
+        };
+
+        let total = todos.len();
+        let completed = todos
+            .iter()
+            .filter(|t| {
+                t.get("status")
+                    .or_else(|| t.get("state"))
+                    .and_then(Value::as_str)
+                    == Some("completed")
+            })
+            .count();
+        let in_progress = todos
+            .iter()
+            .find(|t| {
+                t.get("status")
+                    .or_else(|| t.get("state"))
+                    .and_then(Value::as_str)
+                    == Some("in_progress")
+            })
+            .and_then(|t| t.get("content").or_else(|| t.get("text")))
+            .and_then(Value::as_str);
+
+        match in_progress {
+            Some(task) => format!(
+                "Todos updated: {}/{} completed, in progress: {}",
+                completed, total, task
+            ),
+            None => format!("Todos updated: {}/{} completed", completed, total),
+        }
     }
 }

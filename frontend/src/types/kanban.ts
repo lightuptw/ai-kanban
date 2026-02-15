@@ -109,3 +109,14 @@ export interface CreateBoardRequest {
 export interface UpdateBoardRequest {
   name: string;
 }
+
+export interface AgentLog {
+  id: string;
+  card_id: string;
+  session_id: string;
+  event_type: string;
+  agent: string | null;
+  content: string;
+  metadata: string;
+  created_at: string;
+}

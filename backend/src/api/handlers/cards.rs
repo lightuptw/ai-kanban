@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
 use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
-use crate::domain::{Card, Comment, KanbanError, Stage};
+use crate::domain::{AgentLog, Card, Comment, KanbanError, Stage};
 use crate::services::{AiDispatchService, CardService};
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +42,21 @@ pub async fn get_card(
     let pool = state.require_db()?;
     let card = CardService::get_card_by_id(pool, &id).await?;
     Ok(Json(card))
+}
+
+pub async fn get_card_logs(
+    State(state): State<AppState>,
+    Path(card_id): Path<String>,
+) -> Result<Json<Vec<AgentLog>>, KanbanError> {
+    let pool = state.require_db()?;
+    let logs: Vec<AgentLog> = sqlx::query_as(
+        "SELECT * FROM agent_logs WHERE card_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&card_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| KanbanError::Internal(e.to_string()))?;
+    Ok(Json(logs))
 }
 
 pub async fn update_card(

@@ -10,6 +10,7 @@ use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::AppState;
+use crate::domain::AgentLog;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -20,6 +21,7 @@ pub enum SseEvent {
     CardDeleted { card_id: String },
     SubtaskToggled { card_id: String, subtask_id: String, completed: bool },
     AiStatusChanged { card_id: String, status: String, progress: serde_json::Value },
+    AgentLogCreated { card_id: String, log: AgentLog },
 }
 
 pub async fn sse_handler(
