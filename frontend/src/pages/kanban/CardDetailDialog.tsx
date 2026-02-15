@@ -23,6 +23,7 @@ import {
   Box,
   Divider,
   Paper,
+  CircularProgress,
 } from "@mui/material";
 import {
   Close as CloseIcon,
@@ -31,6 +32,7 @@ import {
   Check as CheckIcon,
   Save as SaveIcon,
   Add as AddIcon,
+  AutoFixHigh as AutoFixHighIcon,
   DragIndicator as DragIndicatorIcon,
   AttachFile as AttachFileIcon,
   CloudUpload as CloudUploadIcon,
@@ -51,8 +53,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { RootState, AppDispatch } from "../../redux/store";
 import type { Card } from "../../types/kanban";
-import { updateCard, deleteCard } from "../../store/slices/kanbanSlice";
+import { updateCard, deleteCard, fetchBoard } from "../../store/slices/kanbanSlice";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { api } from "../../services/api";
 
 const DialogHeader = styled(DialogTitle)`
   display: flex;
@@ -444,6 +447,15 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     }
   };
 
+  const handleGeneratePlan = async () => {
+    try {
+      await api.generatePlan(cardId);
+      dispatch(fetchBoard());
+    } catch (err) {
+      console.error("Failed to generate plan:", err);
+    }
+  };
+
   if (!card) return null;
 
   const subtaskProgress = card.subtask_count > 0 ? (card.subtask_completed / card.subtask_count) * 100 : 0;
@@ -503,6 +515,23 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
             placeholder="Add description..."
           />
         </Section>
+
+        {card?.stage === 'plan' && (
+          <Section>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<AutoFixHighIcon />}
+                onClick={handleGeneratePlan}
+                disabled={card.ai_status === 'planning' || card.ai_status === 'working'}
+              >
+                {card.ai_status === 'planning' ? 'Generating...' : 'Generate Plan'}
+              </Button>
+              {card.ai_status === 'planning' && <CircularProgress size={20} />}
+            </Box>
+          </Section>
+        )}
 
         {/* Subtasks */}
         <Section>

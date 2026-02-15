@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
@@ -123,6 +124,126 @@ pub async fn move_card(
     }
 
     Ok(Json(card))
+}
+
+pub async fn generate_plan(
+    State(state): State<AppState>,
+    Path(card_id): Path<String>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &card_id).await?;
+
+    if card.stage != "plan" {
+        return Err(KanbanError::BadRequest(
+            "Plan generation is only available for cards in the plan stage".into(),
+        ));
+    }
+
+    let subtasks = CardService::get_subtasks(pool, &card_id).await?;
+    let subtask_titles = if subtasks.is_empty() {
+        "None".to_string()
+    } else {
+        subtasks
+            .iter()
+            .map(|s| format!("- {}", s.title))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let session_response = state
+        .http_client
+        .post(format!("{}/session", state.config.opencode_url))
+        .json(&json!({}))
+        .send()
+        .await
+        .map_err(|e| {
+            KanbanError::OpenCodeError(format!("Failed to create OpenCode session: {}", e))
+        })?;
+
+    if !session_response.status().is_success() {
+        return Err(KanbanError::OpenCodeError(format!(
+            "OpenCode session creation failed with status {}",
+            session_response.status()
+        )));
+    }
+
+    let session_body = session_response
+        .json::<Value>()
+        .await
+        .map_err(|e| KanbanError::OpenCodeError(format!("Failed to decode session response: {}", e)))?;
+
+    let session_id = session_body
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| KanbanError::OpenCodeError("OpenCode session response missing id".into()))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE cards SET ai_session_id = ?, ai_status = ?, updated_at = ? WHERE id = ?")
+        .bind(&session_id)
+        .bind("planning")
+        .bind(&now)
+        .bind(&card_id)
+        .execute(pool)
+        .await?;
+
+    let prompt = format!(
+        "You are a project planning assistant. Analyze this card and create a detailed implementation plan.\n\nCard Title: {}\nDescription: {}\nPriority: {}\nWorking Directory: {}\nCurrent Subtasks: {}\n\nYour job:\n1. Analyze the card requirements\n2. Break down the work into concrete, actionable subtasks\n3. For each subtask, use the kanban MCP tool `create_subtask` to add it to the card\n4. Set appropriate phase names for grouping related subtasks\n5. Summarize your plan at the end\n\nUse the kanban MCP tools to create subtasks. The card_id is: {}",
+        card.title,
+        card.description,
+        card.priority,
+        card.working_directory,
+        subtask_titles,
+        card.id,
+    );
+
+    let http_client = state.http_client.clone();
+    let message_url = format!(
+        "{}/session/{}/message",
+        state.config.opencode_url,
+        session_id.as_str()
+    );
+    let db_clone = pool.clone();
+    let card_id_clone = card_id.clone();
+
+    tokio::spawn(async move {
+        let result = http_client
+            .post(&message_url)
+            .json(&json!({"parts": [{"type": "text", "text": prompt}]}))
+            .send()
+            .await;
+
+        match result {
+            Ok(response) if response.status().is_success() => {
+                tracing::info!(card_id = card_id_clone.as_str(), "Plan generation prompt sent successfully");
+            }
+            Ok(response) => {
+                tracing::warn!(
+                    card_id = card_id_clone.as_str(),
+                    status = %response.status(),
+                    "Plan generation message returned non-success"
+                );
+                let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                    .bind("failed")
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(&card_id_clone)
+                    .execute(&db_clone)
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!(card_id = card_id_clone.as_str(), error = %err, "Failed to send plan generation message");
+                let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                    .bind("failed")
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(&card_id_clone)
+                    .execute(&db_clone)
+                    .await;
+            }
+        }
+    });
+
+    let updated_card = CardService::get_card_by_id(pool, &card_id).await?;
+    Ok(Json(updated_card))
 }
 
 async fn handle_review_redispatch(

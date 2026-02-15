@@ -175,6 +175,13 @@ impl SseRelayService {
                             .bind(&card.id)
                             .execute(&self.db)
                             .await?;
+                        } else if card.stage == "plan" && card.ai_status == "planning" {
+                            sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                                .bind("working")
+                                .bind(&now)
+                                .bind(&card.id)
+                                .execute(&self.db)
+                                .await?;
                         }
                     }
                     _ => {
@@ -199,6 +206,13 @@ impl SseRelayService {
                     .bind(&card.id)
                     .execute(&self.db)
                     .await?;
+                } else if card.stage == "plan" {
+                    sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                        .bind("idle")
+                        .bind(&now)
+                        .bind(&card.id)
+                        .execute(&self.db)
+                        .await?;
                 }
             }
 

@@ -52,6 +52,9 @@ export const api = {
 
   getCard: (id: string) => fetchAPI<Card>(`/api/cards/${id}`),
 
+  generatePlan: (cardId: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/generate-plan`, { method: "POST" }),
+
   updateCard: (id: string, data: UpdateCardRequest) =>
     fetchAPI<Card>(`/api/cards/${id}`, {
       method: "PATCH",

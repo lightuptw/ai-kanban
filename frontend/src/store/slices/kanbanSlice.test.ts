@@ -17,30 +17,36 @@ const mockCard: Card = {
   plan_path: null,
   ai_session_id: null,
   ai_status: "idle",
-  ai_progress: {},
-  linked_documents: [],
+  ai_progress: "{}",
+  linked_documents: "[]",
   created_at: "2026-02-14T00:00:00Z",
   updated_at: "2026-02-14T00:00:00Z",
-  subtasks: [],
-  labels: [],
-  comments: [],
+  subtask_count: 0,
+  subtask_completed: 0,
+  label_count: 0,
+  comment_count: 0,
+};
+
+const baseState = {
+  columns: {
+    backlog: [] as Card[],
+    plan: [] as Card[],
+    todo: [] as Card[],
+    in_progress: [] as Card[],
+    review: [] as Card[],
+    done: [] as Card[],
+  },
+  loading: false,
+  error: null as string | null,
+  selectedCardId: null as string | null,
+  boards: [],
+  activeBoardId: null,
+  boardsLoading: false,
 };
 
 describe("kanbanSlice", () => {
   it("should set selected card", () => {
-    const initialState = {
-      columns: {
-        backlog: [],
-        plan: [],
-        todo: [],
-        in_progress: [],
-        review: [],
-        done: [],
-      },
-      loading: false,
-      error: null,
-      selectedCardId: null,
-    };
+    const initialState = { ...baseState };
 
     const state = kanbanReducer(initialState, setSelectedCard("card-123"));
     expect(state.selectedCardId).toBe("card-123");
@@ -48,17 +54,11 @@ describe("kanbanSlice", () => {
 
   it("should optimistically move card between columns", () => {
     const initialState = {
+      ...baseState,
       columns: {
+        ...baseState.columns,
         backlog: [mockCard],
-        plan: [],
-        todo: [],
-        in_progress: [],
-        review: [],
-        done: [],
       },
-      loading: false,
-      error: null,
-      selectedCardId: null,
     };
 
     const state = kanbanReducer(
@@ -81,17 +81,11 @@ describe("kanbanSlice", () => {
   it("should revert card move on error", () => {
     const movedCard = { ...mockCard, stage: "plan" as const, position: 2000 };
     const initialState = {
+      ...baseState,
       columns: {
-        backlog: [],
+        ...baseState.columns,
         plan: [movedCard],
-        todo: [],
-        in_progress: [],
-        review: [],
-        done: [],
       },
-      loading: false,
-      error: null,
-      selectedCardId: null,
     };
 
     const state = kanbanReducer(
@@ -114,17 +108,12 @@ describe("kanbanSlice", () => {
     const card2 = { ...mockCard, id: "card-2", position: 3000 };
     
     const initialState = {
+      ...baseState,
       columns: {
+        ...baseState.columns,
         backlog: [card1],
         plan: [card2],
-        todo: [],
-        in_progress: [],
-        review: [],
-        done: [],
       },
-      loading: false,
-      error: null,
-      selectedCardId: null,
     };
 
     const state = kanbanReducer(

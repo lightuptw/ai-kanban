@@ -1,16 +1,16 @@
-import { Dispatch } from "@reduxjs/toolkit";
 import { updateCardFromSSE, removeCardFromSSE, fetchBoard } from "../store/slices/kanbanSlice";
+import type { AppDispatch } from "../redux/store";
 import type { Card } from "../types/kanban";
 
 const SSE_URL = (import.meta.env.VITE_API_URL || "http://localhost:3000") + "/api/events";
 
 export class SSEManager {
   private eventSource: EventSource | null = null;
-  private dispatch: Dispatch;
+  private dispatch: AppDispatch;
   private reconnectAttempts = 0;
   private maxReconnectDelay = 30000;
 
-  constructor(dispatch: Dispatch) {
+  constructor(dispatch: AppDispatch) {
     this.dispatch = dispatch;
   }
 
