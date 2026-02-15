@@ -11,6 +11,9 @@ import {
   Typography,
   InputBase,
   ClickAwayListener,
+  FormControl,
+  Select,
+  MenuItem,
 } from "@mui/material";
 
 
@@ -18,6 +21,7 @@ import { Menu as MenuIcon, Edit as EditIcon, Check as CheckIcon, Delete as Delet
 
 import { RootState, AppDispatch } from "../../redux/store";
 import { updateBoard, deleteBoard } from "../../store/slices/kanbanSlice";
+import { api } from "../../services/api";
 
 const AppBar = styled(MuiAppBar)`
   background: ${(props) => props.theme.header.background};
@@ -55,10 +59,30 @@ const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
 
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(boardName);
+  const [aiConcurrency, setAiConcurrency] = useState("1");
 
   useEffect(() => {
     setEditName(boardName);
   }, [boardName]);
+
+  useEffect(() => {
+    api
+      .getSetting("ai_concurrency")
+      .then((setting) => {
+        const parsed = Number.parseInt(setting.value, 10);
+        setAiConcurrency(Number.isFinite(parsed) && parsed >= 1 && parsed <= 5 ? String(parsed) : "1");
+      })
+      .catch(() => {
+        setAiConcurrency("1");
+      });
+  }, []);
+
+  const handleConcurrencyChange = (value: string) => {
+    setAiConcurrency(value);
+    api.setSetting("ai_concurrency", value).catch(() => {
+      setAiConcurrency("1");
+    });
+  };
 
   const handleSave = () => {
     const trimmed = editName.trim();
@@ -122,6 +146,38 @@ const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
               )}
             </Grid>
             <Grid item xs />
+            <Grid item sx={{ display: "flex", alignItems: "center", mr: 1.5, gap: 1 }}>
+              <Typography sx={{ color: "#000", fontSize: "0.8rem", fontWeight: 600 }}>
+                AI
+              </Typography>
+              <FormControl size="small" sx={{ minWidth: 68 }}>
+                <Select
+                  value={aiConcurrency}
+                  onChange={(e) => handleConcurrencyChange(e.target.value as string)}
+                  sx={{
+                    height: 28,
+                    color: "#000",
+                    fontSize: "0.8rem",
+                    "& .MuiOutlinedInput-notchedOutline": {
+                      borderColor: "rgba(0,0,0,0.25)",
+                    },
+                    "& .MuiSelect-select": {
+                      py: 0.25,
+                      pr: 3,
+                    },
+                  }}
+                >
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <MenuItem key={value} value={String(value)}>
+                      {value}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Typography sx={{ color: "#000", fontSize: "0.75rem" }}>
+                concurrent
+              </Typography>
+            </Grid>
             {activeBoardId && (
               <Grid item>
                 <IconButton

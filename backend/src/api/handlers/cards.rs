@@ -11,7 +11,7 @@ use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRe
 use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::{AgentLog, Card, Comment, KanbanError, Stage};
-use crate::services::{AiDispatchService, CardService};
+use crate::services::CardService;
 
 #[derive(Debug, Deserialize)]
 pub struct BoardQuery {
@@ -97,16 +97,12 @@ pub async fn move_card(
                 tracing::warn!("Review re-dispatch failed for card {}: {}", id, e);
             }
         } else {
-            let card_model = CardService::get_card_model(pool, &id).await?;
-            let subtasks = CardService::get_subtasks(pool, &id).await?;
-
-            if let Err(e) =
-                AiDispatchService::new(state.http_client.clone(), state.config.opencode_url.clone())
-                    .dispatch_card(&card_model, &subtasks, pool)
-                    .await
-            {
-                tracing::warn!("AI dispatch failed for card {}: {}", id, e);
-            }
+            sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                .bind("queued")
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(&id)
+                .execute(pool)
+                .await?;
         }
 
         let updated_card = CardService::get_card_by_id(pool, &id).await?;
@@ -247,7 +243,7 @@ pub async fn generate_plan(
 }
 
 async fn handle_review_redispatch(
-    state: &AppState,
+    _state: &AppState,
     card: &Card,
     pool: &SqlitePool,
 ) -> Result<(), KanbanError> {
@@ -279,10 +275,11 @@ async fn handle_review_redispatch(
     std::fs::write(plan_path, &updated_plan)
         .map_err(|e| KanbanError::Internal(format!("Failed to write plan: {}", e)))?;
 
-    let subtasks = CardService::get_subtasks(pool, &card.id).await?;
-
-    AiDispatchService::new(state.http_client.clone(), state.config.opencode_url.clone())
-        .dispatch_card(card, &subtasks, pool)
+    sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+        .bind("queued")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(&card.id)
+        .execute(pool)
         .await?;
 
     Ok(())

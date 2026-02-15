@@ -9,7 +9,7 @@ use kanban_backend::api::{create_router, AppState};
 use kanban_backend::config::Config;
 use kanban_backend::infrastructure::db;
 use kanban_backend::mcp::KanbanMcp;
-use kanban_backend::services::SseRelayService;
+use kanban_backend::services::{QueueProcessor, SseRelayService};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpService,
 };
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(pool) = db_pool.clone() {
         let relay = SseRelayService {
             opencode_url: config.opencode_url.clone(),
-            db: pool,
+            db: pool.clone(),
             sse_tx: sse_tx.clone(),
             http_client: http_client.clone(),
         };
@@ -59,8 +59,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("SSE relay started");
             relay.start().await;
         });
+
+        let processor = QueueProcessor {
+            db: pool,
+            http_client: http_client.clone(),
+            opencode_url: config.opencode_url.clone(),
+            sse_tx: sse_tx.clone(),
+        };
+
+        tokio::spawn(async move {
+            tracing::info!("Queue processor started");
+            processor.start().await;
+        });
     } else {
-        tracing::warn!("SSE relay not started: database unavailable");
+        tracing::warn!("Background services not started: database unavailable");
     }
 
     let config = Arc::new(config);
