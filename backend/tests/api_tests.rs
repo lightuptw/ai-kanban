@@ -16,6 +16,7 @@ async fn test_health_check() {
         opencode_url: "http://localhost:4096".to_string(),
         frontend_dir: "../frontend/dist".to_string(),
         cors_origin: "http://localhost:5173".to_string(),
+        cookie_secure: false,
     });
 
     let state = kanban_backend::api::state::AppState {
@@ -45,6 +46,7 @@ async fn test_create_and_get_card() {
         opencode_url: "http://localhost:4096".to_string(),
         frontend_dir: "../frontend/dist".to_string(),
         cors_origin: "http://localhost:5173".to_string(),
+        cookie_secure: false,
     });
 
     let state = kanban_backend::api::state::AppState {
@@ -108,6 +110,7 @@ async fn test_move_card_between_stages() {
         opencode_url: "http://localhost:4096".to_string(),
         frontend_dir: "../frontend/dist".to_string(),
         cors_origin: "http://localhost:5173".to_string(),
+        cookie_secure: false,
     });
 
     let state = kanban_backend::api::state::AppState {
@@ -170,6 +173,7 @@ async fn test_invalid_stage_transition() {
         opencode_url: "http://localhost:4096".to_string(),
         frontend_dir: "../frontend/dist".to_string(),
         cors_origin: "http://localhost:5173".to_string(),
+        cookie_secure: false,
     });
 
     let state = kanban_backend::api::state::AppState {
@@ -228,6 +232,7 @@ async fn test_delete_card() {
         opencode_url: "http://localhost:4096".to_string(),
         frontend_dir: "../frontend/dist".to_string(),
         cors_origin: "http://localhost:5173".to_string(),
+        cookie_secure: false,
     });
 
     let state = kanban_backend::api::state::AppState {
@@ -291,6 +296,7 @@ async fn test_get_board() {
         opencode_url: "http://localhost:4096".to_string(),
         frontend_dir: "../frontend/dist".to_string(),
         cors_origin: "http://localhost:5173".to_string(),
+        cookie_secure: false,
     });
 
     let state = kanban_backend::api::state::AppState {

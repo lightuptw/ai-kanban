@@ -1,12 +1,15 @@
 use axum::{
+    body::Body,
     extract::{Extension, State},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::state::AppState;
-use crate::auth::{jwt, middleware::AuthUser, password};
+use crate::auth::{cookies, jwt, middleware::AuthUser, password};
 use crate::domain::KanbanError;
 
 #[derive(Debug, Deserialize)]
@@ -31,9 +34,7 @@ pub struct RefreshRequest {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AuthResponse {
-    pub token: String,
-    pub refresh_token: String,
+pub struct LoginResponse {
     pub user: UserResponse,
 }
 
@@ -100,7 +101,7 @@ async fn issue_tokens(
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
-) -> Result<Json<AuthResponse>, KanbanError> {
+) -> Result<Response, KanbanError> {
     let username = req.username.trim().to_string();
     let password = req.password;
     let nickname = req.nickname.trim().to_string();
@@ -157,11 +158,10 @@ pub async fn register(
     .await?;
 
     let (token, refresh_token) = issue_tokens(db, &user_id, &tenant_id).await?;
+    let secure = state.config.cookie_secure;
 
-    Ok(Json(AuthResponse {
-        token,
-        refresh_token,
-        user: UserResponse {
+    build_auth_response(
+        UserResponse {
             id: user_id,
             username,
             nickname,
@@ -170,13 +170,16 @@ pub async fn register(
             email,
             tenant_id,
         },
-    }))
+        &token,
+        &refresh_token,
+        secure,
+    )
 }
 
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<AuthResponse>, KanbanError> {
+) -> Result<Response, KanbanError> {
     let username = req.username.trim().to_string();
 
     let db = state.require_db()?;
@@ -200,11 +203,10 @@ pub async fn login(
     }
 
     let (token, refresh_token) = issue_tokens(db, &user.id, &user.tenant_id).await?;
+    let secure = state.config.cookie_secure;
 
-    Ok(Json(AuthResponse {
-        token,
-        refresh_token,
-        user: UserResponse {
+    build_auth_response(
+        UserResponse {
             id: user.id,
             username: user.username,
             nickname: user.nickname,
@@ -213,15 +215,23 @@ pub async fn login(
             email: user.email,
             tenant_id: user.tenant_id,
         },
-    }))
+        &token,
+        &refresh_token,
+        secure,
+    )
 }
 
 pub async fn refresh(
     State(state): State<AppState>,
-    Json(req): Json<RefreshRequest>,
-) -> Result<Json<AuthResponse>, KanbanError> {
+    headers: HeaderMap,
+    req: Option<Json<RefreshRequest>>,
+) -> Result<Response, KanbanError> {
     let db = state.require_db()?;
-    let token_hash = jwt::hash_refresh_token(req.refresh_token.trim());
+    let refresh_token = extract_cookie_value(&headers, cookies::REFRESH_TOKEN_COOKIE)
+        .or_else(|| req.map(|Json(body)| body.refresh_token.trim().to_string()))
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| KanbanError::Unauthorized("Invalid refresh token".into()))?;
+    let token_hash = jwt::hash_refresh_token(&refresh_token);
     let now = chrono::Utc::now().to_rfc3339();
 
     let refresh_token: RefreshTokenRow = sqlx::query_as(
@@ -247,12 +257,36 @@ pub async fn refresh(
     .ok_or_else(|| KanbanError::Unauthorized("Invalid refresh token".into()))?;
 
     let (token, refresh_token) = issue_tokens(db, &user.id, &user.tenant_id).await?;
+    let secure = state.config.cookie_secure;
 
-    Ok(Json(AuthResponse {
-        token,
-        refresh_token,
-        user,
-    }))
+    build_auth_response(user, &token, &refresh_token, secure)
+}
+
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, KanbanError> {
+    let db = state.require_db()?;
+
+    if let Some(refresh_token) = extract_cookie_value(&headers, cookies::REFRESH_TOKEN_COOKIE) {
+        let token_hash = jwt::hash_refresh_token(refresh_token.trim());
+
+        sqlx::query("UPDATE refresh_tokens SET revoked = 1 WHERE token_hash = ?")
+            .bind(token_hash)
+            .execute(db)
+            .await?;
+    }
+
+    let secure = state.config.cookie_secure;
+    let clear_access_cookie = cookies::build_clear_cookie(cookies::ACCESS_TOKEN_COOKIE, secure);
+    let clear_refresh_cookie = cookies::build_clear_cookie(cookies::REFRESH_TOKEN_COOKIE, secure);
+
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(header::SET_COOKIE, clear_access_cookie)
+        .header(header::SET_COOKIE, clear_refresh_cookie)
+        .body(Body::empty())
+        .map_err(|e| KanbanError::Internal(format!("Failed to build auth response: {}", e)))
 }
 
 pub async fn me(
@@ -270,4 +304,52 @@ pub async fn me(
     .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
 
     Ok(Json(user))
+}
+
+fn build_auth_response(
+    user: UserResponse,
+    access_token: &str,
+    refresh_token: &str,
+    secure: bool,
+) -> Result<Response, KanbanError> {
+    let access_cookie = cookies::build_token_cookie(
+        cookies::ACCESS_TOKEN_COOKIE,
+        access_token,
+        15 * 60,
+        secure,
+    );
+    let refresh_cookie = cookies::build_token_cookie(
+        cookies::REFRESH_TOKEN_COOKIE,
+        refresh_token,
+        30 * 24 * 60 * 60,
+        secure,
+    );
+    let response_body = Json(LoginResponse { user }).into_response().into_body();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::SET_COOKIE, access_cookie)
+        .header(header::SET_COOKIE, refresh_cookie)
+        .body(response_body)
+        .map_err(|e| KanbanError::Internal(format!("Failed to build auth response: {}", e)))
+}
+
+pub(crate) fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookie_header| {
+            cookie_header.split(';').find_map(|cookie| {
+                let mut split = cookie.trim().splitn(2, '=');
+                let name = split.next()?.trim();
+                let value = split.next()?.trim();
+
+                if name == cookie_name && !value.is_empty() {
+                    Some(value.to_string())
+                } else {
+                    None
+                }
+            })
+        })
 }

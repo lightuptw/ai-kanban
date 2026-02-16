@@ -6,6 +6,8 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use crate::api::state::AppState;
+use crate::auth::cookies;
+use crate::auth::handlers::extract_cookie_value;
 use crate::auth::jwt;
 
 #[derive(Debug, Clone)]
@@ -105,18 +107,20 @@ fn extract_token(req: &Request) -> Option<String> {
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(str::to_string);
 
-    auth_header.or_else(|| {
-        req.uri().query().and_then(|query| {
-            query
-                .split('&')
-                .filter_map(|part| {
-                    let mut split = part.splitn(2, '=');
-                    let key = split.next()?;
-                    let value = split.next().unwrap_or_default();
-                    Some((key, value))
-                })
-                .find(|(key, _)| *key == "token")
-                .map(|(_, value)| value.to_string())
+    auth_header
+        .or_else(|| extract_cookie_value(req.headers(), cookies::ACCESS_TOKEN_COOKIE))
+        .or_else(|| {
+            req.uri().query().and_then(|query| {
+                query
+                    .split('&')
+                    .filter_map(|part| {
+                        let mut split = part.splitn(2, '=');
+                        let key = split.next()?;
+                        let value = split.next().unwrap_or_default();
+                        Some((key, value))
+                    })
+                    .find(|(key, _)| *key == "token")
+                    .map(|(_, value)| value.to_string())
+            })
         })
-    })
 }

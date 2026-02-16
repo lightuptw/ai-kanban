@@ -7,6 +7,7 @@ pub struct Config {
     pub opencode_url: String,
     pub frontend_dir: String,
     pub cors_origin: String,
+    pub cookie_secure: bool,
 }
 
 impl Config {
@@ -24,6 +25,10 @@ impl Config {
                 .unwrap_or_else(|_| "../frontend/dist".into()),
             cors_origin: std::env::var("CORS_ORIGIN")
                 .unwrap_or_else(|_| "http://localhost:21548,http://127.0.0.1:21548".into()),
+            cookie_secure: std::env::var("COOKIE_SECURE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
         })
     }
 }
@@ -36,6 +41,7 @@ impl Default for Config {
             opencode_url: "http://localhost:4096".into(),
             frontend_dir: "../frontend/dist".into(),
             cors_origin: "http://localhost:21548,http://127.0.0.1:21548".into(),
+            cookie_secure: false,
         }
     }
 }
