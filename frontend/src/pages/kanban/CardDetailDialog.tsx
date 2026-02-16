@@ -295,17 +295,17 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
         ai_agent: card.ai_agent || "",
       };
       
-      fetch(`${API_BASE_URL}/api/cards/${card.id}/files`)
+      fetch(`${API_BASE_URL}/api/cards/${card.id}/files`, { credentials: "include" })
         .then((res) => res.json())
         .then((data) => setFiles(data))
         .catch((err) => console.error("Failed to fetch files:", err));
       
-      fetch(`${API_BASE_URL}/api/cards/${card.id}/comments`)
+      fetch(`${API_BASE_URL}/api/cards/${card.id}/comments`, { credentials: "include" })
         .then((res) => res.json())
         .then((data) => setComments(data))
         .catch((err) => console.error("Failed to fetch comments:", err));
       
-      fetch(`${API_BASE_URL}/api/cards/${card.id}`)
+      fetch(`${API_BASE_URL}/api/cards/${card.id}`, { credentials: "include" })
         .then((res) => res.json())
         .then((data) => {
           setSubtasks(data.subtasks || []);
@@ -417,8 +417,9 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     });
 
     try {
-       const response = await fetch(`${API_BASE_URL}/api/cards/${card.id}/files`, {
+      const response = await fetch(`${API_BASE_URL}/api/cards/${card.id}/files`, {
         method: "POST",
+        credentials: "include",
         body: formData,
       });
       const uploadedFiles = await response.json();
@@ -434,6 +435,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     try {
        await fetch(`${API_BASE_URL}/api/files/${fileId}`, {
         method: "DELETE",
+        credentials: "include",
       });
       setFiles(files.filter((f) => f.id !== fileId));
     } catch (err) {
@@ -467,6 +469,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     try {
        const response = await fetch(`${API_BASE_URL}/api/cards/${card.id}/subtasks`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: text, phase, phase_order: phaseOrder }),
       });
@@ -503,8 +506,9 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
 
     for (const st of phaseSubtasks) {
       try {
-         await fetch(`${API_BASE_URL}/api/subtasks/${st.id}`, {
+        await fetch(`${API_BASE_URL}/api/subtasks/${st.id}`, {
           method: "PATCH",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ phase: trimmed }),
         });
@@ -537,8 +541,9 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     for (let i = 0; i < reordered.length; i++) {
       if (reordered[i].id.startsWith("_placeholder_")) continue;
       try {
-         await fetch(`${API_BASE_URL}/api/subtasks/${reordered[i].id}`, {
+        await fetch(`${API_BASE_URL}/api/subtasks/${reordered[i].id}`, {
           method: "PATCH",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ position: (i + 1) * 1000 }),
         });
@@ -550,11 +555,12 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
 
   const handleToggleSubtask = async (subtaskId: string, completed: boolean) => {
     try {
-       await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
-         method: "PATCH",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ completed }),
-       });
+      await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completed }),
+      });
       setSubtasks(subtasks.map((s) => s.id === subtaskId ? { ...s, completed } : s));
     } catch (err) {
       console.error("Failed to toggle subtask:", err);
@@ -563,9 +569,10 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
 
   const handleDeleteSubtask = async (subtaskId: string) => {
     try {
-       await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
-         method: "DELETE",
-       });
+      await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
       setSubtasks(subtasks.filter((s) => s.id !== subtaskId));
     } catch (err) {
       console.error("Failed to delete subtask:", err);
@@ -575,11 +582,12 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const handleEditSubtask = async (subtaskId: string) => {
     if (!editingSubtaskTitle.trim()) return;
     try {
-       const response = await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
-         method: "PATCH",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ title: editingSubtaskTitle }),
-       });
+      const response = await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: editingSubtaskTitle }),
+      });
       const updated = await response.json();
       setSubtasks(subtasks.map((s) => s.id === subtaskId ? updated : s));
       setEditingSubtaskId(null);
@@ -592,11 +600,12 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const handleEditComment = async (commentId: string) => {
     if (!editingCommentContent.trim()) return;
     try {
-       const response = await fetch(`${API_BASE_URL}/api/comments/${commentId}`, {
-         method: "PATCH",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ content: editingCommentContent }),
-       });
+      const response = await fetch(`${API_BASE_URL}/api/comments/${commentId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: editingCommentContent }),
+      });
       const updated = await response.json();
       setComments(comments.map((c) => c.id === commentId ? updated : c));
       setEditingCommentId(null);
@@ -608,7 +617,10 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
 
   const handleDeleteComment = async (commentId: string) => {
     try {
-       await fetch(`${API_BASE_URL}/api/comments/${commentId}`, { method: "DELETE" });
+      await fetch(`${API_BASE_URL}/api/comments/${commentId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
       setComments(comments.filter((c) => c.id !== commentId));
     } catch (err) {
       console.error("Failed to delete comment:", err);
@@ -618,11 +630,12 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const handleAddComment = async () => {
     if (!newComment.trim() || !card) return;
     try {
-       const response = await fetch(`${API_BASE_URL}/api/cards/${card.id}/comments`, {
-         method: "POST",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ author: "User", content: newComment }),
-       });
+      const response = await fetch(`${API_BASE_URL}/api/cards/${card.id}/comments`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author: "User", content: newComment }),
+      });
       const comment = await response.json();
       setComments([...comments, comment]);
       setNewComment("");
@@ -1162,7 +1175,10 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
             startIcon={<AttachFileIcon />}
             onClick={async () => {
               try {
-                 const res = await fetch(`${API_BASE_URL}/api/pick-files`, { method: 'POST' });
+                 const res = await fetch(`${API_BASE_URL}/api/pick-files`, {
+                   method: "POST",
+                   credentials: "include",
+                 });
                 const data = await res.json();
                 if (data.paths && data.paths.length > 0) {
                   const existing = linkedDocs && linkedDocs !== '[]' ? linkedDocs.split('\n').filter(Boolean) : [];
@@ -1189,7 +1205,10 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
               size="small"
               onClick={async () => {
                 try {
-                   const res = await fetch(`${API_BASE_URL}/api/pick-directory`, { method: 'POST' });
+                   const res = await fetch(`${API_BASE_URL}/api/pick-directory`, {
+                     method: "POST",
+                     credentials: "include",
+                   });
                   const data = await res.json();
                   if (data.path) {
                     setWorkingDir(data.path);

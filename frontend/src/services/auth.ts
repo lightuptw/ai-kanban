@@ -2,8 +2,6 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   `${window.location.protocol}//${window.location.hostname}:21547`;
 
-const TOKEN_KEY = "token";
-const REFRESH_TOKEN_KEY = "refresh_token";
 const AUTH_USER_KEY = "auth_user";
 
 export type AuthUser = {
@@ -17,8 +15,6 @@ export type AuthUser = {
 };
 
 export type AuthResponse = {
-  token: string;
-  refresh_token: string;
   user: AuthUser;
 };
 
@@ -31,13 +27,14 @@ type RegisterFields = {
   email?: string;
 };
 
-async function postAuth<T>(endpoint: string, payload: unknown): Promise<T> {
+async function postAuth<T>(endpoint: string, payload?: unknown): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    credentials: "include",
+    body: payload ? JSON.stringify(payload) : undefined,
   });
 
   if (!response.ok) {
@@ -45,24 +42,19 @@ async function postAuth<T>(endpoint: string, payload: unknown): Promise<T> {
     throw new Error(error.error || `HTTP ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json();
 }
 
-export function setTokens(token: string, refreshToken: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-}
-
 export function setUser(user: AuthUser) {
-  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-}
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
 }
 
 export function getUser(): AuthUser | null {
-  const userJson = localStorage.getItem(AUTH_USER_KEY);
+  const userJson = sessionStorage.getItem(AUTH_USER_KEY);
   if (!userJson) {
     return null;
   }
@@ -75,49 +67,35 @@ export function getUser(): AuthUser | null {
 }
 
 export function isAuthenticated() {
-  return Boolean(getToken());
+  return Boolean(getUser());
 }
 
 export async function login(username: string, password: string) {
   const data = await postAuth<AuthResponse>("/api/auth/login", { username, password });
-  setTokens(data.token, data.refresh_token);
   setUser(data.user);
   return data;
 }
 
 export async function register(fields: RegisterFields) {
   const data = await postAuth<AuthResponse>("/api/auth/register", fields);
-  setTokens(data.token, data.refresh_token);
   setUser(data.user);
   return data;
 }
 
 export async function refresh() {
-  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-  if (!refreshToken) {
-    throw new Error("No refresh token");
-  }
-
-  const data = await postAuth<Partial<AuthResponse>>("/api/auth/refresh", {
-    refresh_token: refreshToken,
-  });
-
-  if (!data.token) {
-    throw new Error("Refresh failed");
-  }
-
-  setTokens(data.token, data.refresh_token || refreshToken);
+  const data = await postAuth<AuthResponse>("/api/auth/refresh");
   if (data.user) {
     setUser(data.user);
   }
-
-  return data.token;
 }
 
-export function logout() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(AUTH_USER_KEY);
+export async function logout() {
+  try {
+    await postAuth<void>("/api/auth/logout");
+  } catch {
+  }
+  sessionStorage.removeItem(AUTH_USER_KEY);
+  window.dispatchEvent(new Event("auth:logout"));
   window.location.href = "/login";
 }
 
@@ -126,9 +104,7 @@ export const authService = {
   register,
   refresh,
   logout,
-  getToken,
   getUser,
   isAuthenticated,
-  setTokens,
   setUser,
 };

@@ -29,10 +29,25 @@ function App({ emotionCache = clientSideEmotionCache }) {
   useEffect(() => {
     if (!wsManager) {
       wsManager = new WebSocketManager(store.dispatch, store.getState);
-      wsManager.connect();
+      if (sessionStorage.getItem("auth_user")) {
+        wsManager.connect();
+      }
     }
 
+    const handleLogin = () => {
+      if (wsManager) wsManager.connect();
+    };
+
+    const handleLogout = () => {
+      if (wsManager) wsManager.disconnect();
+    };
+
+    window.addEventListener("auth:login", handleLogin);
+    window.addEventListener("auth:logout", handleLogout);
+
     return () => {
+      window.removeEventListener("auth:login", handleLogin);
+      window.removeEventListener("auth:logout", handleLogout);
       if (wsManager) {
         wsManager.disconnect();
         wsManager = null;

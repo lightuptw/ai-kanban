@@ -40,9 +40,8 @@ export class WebSocketManager {
       this.ws.close();
     }
 
-    const token = localStorage.getItem("token") || "";
-    if (!token) {
-      console.log("[WS] No auth token, skipping connection");
+    if (!sessionStorage.getItem("auth_user")) {
+      console.log("[WS] Not authenticated, skipping connection");
       return;
     }
 
@@ -50,7 +49,7 @@ export class WebSocketManager {
     const host = import.meta.env.VITE_API_URL
       ? new URL(import.meta.env.VITE_API_URL).host
       : `${window.location.hostname}:21547`;
-    const wsUrl = `${protocol}//${host}/ws/events?token=${encodeURIComponent(token)}`;
+    const wsUrl = `${protocol}//${host}/ws/events`;
 
     console.log("[WS] Connecting to", wsUrl);
     this.ws = new WebSocket(wsUrl);

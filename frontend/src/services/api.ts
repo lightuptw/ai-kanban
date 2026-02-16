@@ -39,36 +39,24 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   `${window.location.protocol}//${window.location.hostname}:21547`;
 
-function buildHeaders(options?: RequestInit, token?: string | null): Headers {
+function buildHeaders(options?: RequestInit): Headers {
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "application/json");
-
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
   return headers;
 }
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit, isRetry = false): Promise<T> {
-  const token = localStorage.getItem("token");
-
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    headers: buildHeaders(options, token),
+    credentials: "include",
+    headers: buildHeaders(options),
   });
 
-  if (response.status === 401 && !isRetry && token) {
+  if (response.status === 401 && !isRetry) {
     try {
       const { authService } = await import("./auth");
-      const newToken = await authService.refresh();
-
-      if (newToken) {
-        return fetchAPI<T>(endpoint, {
-          ...options,
-          headers: buildHeaders(options, newToken),
-        }, true);
-      }
+      await authService.refresh();
+      return fetchAPI<T>(endpoint, options, true);
     } catch {
       const { authService } = await import("./auth");
       authService.logout();
