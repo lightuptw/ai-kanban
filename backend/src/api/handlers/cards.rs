@@ -53,6 +53,15 @@ pub async fn create_card(
 ) -> Result<(StatusCode, Json<CardResponse>), KanbanError> {
     let pool = state.require_db()?;
     let card = CardService::create_card(pool, req).await?;
+
+    let event = SseEvent::CardCreated {
+        card_id: card.id.clone(),
+        title: card.title.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok((StatusCode::CREATED, Json(card)))
 }
 
@@ -177,6 +186,13 @@ pub async fn restore_card_version(
     .execute(pool)
     .await?;
 
+    let event = SseEvent::CardUpdated {
+        card_id: card_id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     let card = CardService::get_card_by_id(pool, &card_id).await?;
     Ok(Json(card))
 }
@@ -188,6 +204,14 @@ pub async fn update_card(
 ) -> Result<Json<CardResponse>, KanbanError> {
     let pool = state.require_db()?;
     let card = CardService::update_card(pool, &id, req).await?;
+
+    let event = SseEvent::CardUpdated {
+        card_id: card.id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(Json(card))
 }
 
@@ -1012,5 +1036,13 @@ pub async fn delete_card(
     }
 
     CardService::delete_card(pool, &id).await?;
+
+    let event = SseEvent::CardDeleted {
+        card_id: id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }

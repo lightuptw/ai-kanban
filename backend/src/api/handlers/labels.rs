@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 
+use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::{KanbanError, Label};
 use crate::services::CardService;
@@ -22,6 +23,15 @@ pub async fn add_label(
 ) -> Result<StatusCode, KanbanError> {
     let pool = state.require_db()?;
     CardService::add_label_to_card(pool, &card_id, &label_id).await?;
+
+    let event = SseEvent::LabelAdded {
+        card_id: card_id.clone(),
+        label_id: label_id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(StatusCode::CREATED)
 }
 
@@ -31,5 +41,14 @@ pub async fn remove_label(
 ) -> Result<StatusCode, KanbanError> {
     let pool = state.require_db()?;
     CardService::remove_label_from_card(pool, &card_id, &label_id).await?;
+
+    let event = SseEvent::LabelRemoved {
+        card_id: card_id.clone(),
+        label_id: label_id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }

@@ -6,6 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::api::handlers::sse::SseEvent;
 use crate::api::state::AppState;
 use crate::domain::KanbanError;
 
@@ -69,6 +70,13 @@ pub async fn create_board(
     .fetch_one(db)
     .await?;
 
+    let event = SseEvent::BoardCreated {
+        board: serde_json::to_value(&board).unwrap_or_default(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok((StatusCode::CREATED, Json(board)))
 }
 
@@ -89,6 +97,13 @@ pub async fn update_board(
     .fetch_one(db)
     .await?;
 
+    let event = SseEvent::BoardUpdated {
+        board: serde_json::to_value(&board).unwrap_or_default(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(Json(board))
 }
 
@@ -105,6 +120,13 @@ pub async fn delete_board(
 
     if result.rows_affected() == 0 {
         return Err(KanbanError::NotFound(format!("Board {} not found", id)));
+    }
+
+    let event = SseEvent::BoardDeleted {
+        board_id: id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -126,6 +148,13 @@ pub async fn reorder_board(
     .bind(&id)
     .fetch_one(db)
     .await?;
+
+    let event = SseEvent::BoardUpdated {
+        board: serde_json::to_value(&board).unwrap_or_default(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
 
     Ok(Json(board))
 }

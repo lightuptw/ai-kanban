@@ -7,6 +7,7 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use crate::api::dto::CreateCommentRequest;
+use crate::api::handlers::sse::SseEvent;
 use crate::api::AppState;
 use crate::domain::{Comment, KanbanError};
 use crate::services::CardService;
@@ -37,6 +38,15 @@ pub async fn create_comment(
 ) -> Result<(StatusCode, Json<Comment>), KanbanError> {
     let pool = state.require_db()?;
     let comment = CardService::create_comment(pool, &card_id, req).await?;
+
+    let event = SseEvent::CommentCreated {
+        card_id: card_id.clone(),
+        comment: serde_json::to_value(&comment).unwrap_or_default(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok((StatusCode::CREATED, Json(comment)))
 }
 
@@ -46,6 +56,11 @@ pub async fn update_comment(
     Json(req): Json<UpdateCommentRequest>,
 ) -> Result<Json<Comment>, KanbanError> {
     let pool = state.require_db()?;
+    let card_id = sqlx::query_scalar::<_, String>("SELECT card_id FROM comments WHERE id = ?")
+        .bind(&id)
+        .fetch_one(pool)
+        .await?;
+
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query("UPDATE comments SET content = ?, created_at = ? WHERE id = ?")
         .bind(&req.content)
@@ -60,6 +75,15 @@ pub async fn update_comment(
         .bind(&id)
         .fetch_one(pool)
         .await?;
+
+    let event = SseEvent::CommentUpdated {
+        card_id,
+        comment: serde_json::to_value(&comment).unwrap_or_default(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(Json(comment))
 }
 
@@ -68,6 +92,11 @@ pub async fn delete_comment(
     Path(id): Path<String>,
 ) -> Result<StatusCode, KanbanError> {
     let pool = state.require_db()?;
+    let card_id = sqlx::query_scalar::<_, String>("SELECT card_id FROM comments WHERE id = ?")
+        .bind(&id)
+        .fetch_one(pool)
+        .await?;
+
     let result = sqlx::query("DELETE FROM comments WHERE id = ?")
         .bind(&id)
         .execute(pool)
@@ -75,5 +104,14 @@ pub async fn delete_comment(
     if result.rows_affected() == 0 {
         return Err(KanbanError::NotFound(format!("Comment not found: {}", id)));
     }
+
+    let event = SseEvent::CommentDeleted {
+        card_id,
+        comment_id: id.clone(),
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
