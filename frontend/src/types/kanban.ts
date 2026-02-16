@@ -78,6 +78,31 @@ export interface MergeResult {
   success: boolean;
   message: string;
   conflicts: string[];
+  conflict_detail?: ConflictDetail;
+}
+
+export interface ConflictFile {
+  path: string;
+  ours_content: string | null;
+  theirs_content: string | null;
+  base_content: string | null;
+  conflict_type: string;
+  is_binary: boolean;
+}
+
+export interface ConflictDetail {
+  files: ConflictFile[];
+  merge_in_progress: boolean;
+}
+
+export interface FileResolution {
+  file_path: string;
+  choice: string;
+  manual_content?: string;
+}
+
+export interface ResolveRequest {
+  resolutions: FileResolution[];
 }
 
 export interface CreateCardRequest {

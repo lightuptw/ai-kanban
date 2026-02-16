@@ -224,6 +224,24 @@ export class WebSocketManager {
         console.log("[WS] Server confirmed connection");
         break;
 
+      case "mergeConflictDetected":
+        console.log("[WS] Merge conflict detected:", event.card_id, event.conflict_count);
+        break;
+
+      case "mergeConflictResolved":
+        console.log("[WS] Merge conflict resolved:", event.card_id, event.remaining_count);
+        break;
+
+      case "mergeCompleted":
+        console.log("[WS] Merge completed:", event.card_id);
+        window.dispatchEvent(new CustomEvent("mergeCompleted", { detail: { cardId: event.card_id } }));
+        break;
+
+      case "mergeAborted":
+        console.log("[WS] Merge aborted:", event.card_id);
+        window.dispatchEvent(new CustomEvent("mergeAborted", { detail: { cardId: event.card_id } }));
+        break;
+
       default:
         console.log("[WS] Unknown event:", eventType);
     }

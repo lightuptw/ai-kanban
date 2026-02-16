@@ -2,7 +2,8 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::json;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn test_health_check() {
@@ -23,6 +24,7 @@ async fn test_health_check() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -52,6 +54,7 @@ async fn test_create_and_get_card() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -115,6 +118,7 @@ async fn test_move_card_between_stages() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -177,6 +181,7 @@ async fn test_invalid_stage_transition() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -235,6 +240,7 @@ async fn test_delete_card() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -298,6 +304,7 @@ async fn test_get_board() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);

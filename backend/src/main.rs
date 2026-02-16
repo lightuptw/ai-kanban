@@ -9,7 +9,7 @@ use kanban_backend::api::{create_router, AppState};
 use kanban_backend::config::Config;
 use kanban_backend::infrastructure::db;
 use kanban_backend::mcp::KanbanMcp;
-use kanban_backend::services::{QueueProcessor, SseRelayService};
+use kanban_backend::services::{GitWorktreeService, QueueProcessor, SseRelayService};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpService,
 };
@@ -43,6 +43,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if let Err(e) = kanban_backend::auth::seed::seed_service_account(&pool).await {
                 tracing::warn!("Failed to seed service account: {}", e);
+            }
+
+            let stale_merges = sqlx::query_as::<_, (String, String)>(
+                "SELECT c.id, COALESCE(bs.codebase_path, '')
+                 FROM cards c
+                 LEFT JOIN board_settings bs ON bs.board_id = c.board_id
+                 WHERE c.stage = 'review' AND c.branch_name != ''",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to scan cards for startup merge recovery");
+                Vec::new()
+            });
+
+            for (card_id, codebase_path) in stale_merges {
+                if codebase_path.trim().is_empty() {
+                    continue;
+                }
+
+                if !GitWorktreeService::is_merge_in_progress(&codebase_path) {
+                    continue;
+                }
+
+                tracing::warn!(card_id = %card_id, codebase_path = %codebase_path, "Found stale merge in progress during startup; aborting");
+
+                if let Err(error) = GitWorktreeService::run_git(&codebase_path, &["merge", "--abort"]) {
+                    tracing::warn!(card_id = %card_id, codebase_path = %codebase_path, error = %error, "Failed to abort stale merge during startup");
+                }
+
+                if let Err(error) = GitWorktreeService::run_git(&codebase_path, &["checkout", "-"]) {
+                    tracing::warn!(card_id = %card_id, codebase_path = %codebase_path, error = %error, "Failed to return branch after stale merge recovery");
+                }
             }
 
             Some(pool)

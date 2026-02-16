@@ -19,6 +19,9 @@ pub enum KanbanError {
     #[error("OpenCode error: {0}")]
     OpenCodeError(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -29,6 +32,7 @@ impl IntoResponse for KanbanError {
             KanbanError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             KanbanError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             KanbanError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            KanbanError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             KanbanError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             KanbanError::OpenCodeError(msg) => (StatusCode::BAD_GATEWAY, msg),
             KanbanError::Database(err) => {

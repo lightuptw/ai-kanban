@@ -62,10 +62,11 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { RootState, AppDispatch } from "../../redux/store";
-import type { CardVersion, DiffResult, MergeResult } from "../../types/kanban";
+import type { CardVersion, ConflictDetail, DiffResult, MergeResult } from "../../types/kanban";
 import { updateCard, deleteCard, fetchBoard } from "../../store/slices/kanbanSlice";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { DiffViewer } from "./DiffViewer";
+import { ConflictResolutionPanel } from "./ConflictResolutionPanel";
 import { api } from "../../services/api";
 import { STAGE_COLORS } from "../../constants/stageColors";
 
@@ -256,6 +257,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [merging, setMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
+  const [conflictDetail, setConflictDetail] = useState<ConflictDetail | null>(null);
   const [creatingPr, setCreatingPr] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [rejectFeedback, setRejectFeedback] = useState("");
@@ -283,6 +285,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
       setDiffData(null);
       setLoadingDiff(false);
       setMergeResult(null);
+      setConflictDetail(null);
       setMerging(false);
       setCreatingPr(false);
       setShowRejectDialog(false);
@@ -671,17 +674,32 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const handleMerge = async () => {
     setMerging(true);
     setMergeResult(null);
+    setConflictDetail(null);
     try {
       const result = await api.mergeCard(cardId);
       setMergeResult(result);
       if (result.success) {
         onClose();
+      } else if (result.conflict_detail) {
+        setConflictDetail(result.conflict_detail);
       }
     } catch (err) {
       setErrorMessage("Failed to merge");
     } finally {
       setMerging(false);
     }
+  };
+
+  const handleMergeComplete = () => {
+    setConflictDetail(null);
+    setMergeResult(null);
+    dispatch(fetchBoard(activeBoardId || undefined));
+    onClose();
+  };
+
+  const handleMergeAbort = () => {
+    setConflictDetail(null);
+    setMergeResult(null);
   };
 
   const handleCreatePr = async () => {
@@ -1280,7 +1298,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 color="success"
                 startIcon={<CallMergeIcon />}
                 onClick={handleMerge}
-                disabled={merging}
+                disabled={merging || !!conflictDetail}
               >
                 {merging ? "Merging..." : "Merge to Main"}
               </Button>
@@ -1289,6 +1307,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 color="warning"
                 startIcon={<RateReviewIcon />}
                 onClick={() => setShowRejectDialog(true)}
+                disabled={!!conflictDetail}
               >
                 Request Changes
               </Button>
@@ -1296,7 +1315,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
                 variant="outlined"
                 startIcon={<GitHubIcon />}
                 onClick={handleCreatePr}
-                disabled={creatingPr}
+                disabled={creatingPr || !!conflictDetail}
               >
                 {creatingPr ? "Creating..." : "Create PR"}
               </Button>
@@ -1304,18 +1323,21 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
 
             <DiffViewer diff={diffData} loading={loadingDiff} />
 
-            {mergeResult && !mergeResult.success && (
+            {conflictDetail && (
+              <Box sx={{ mt: 2 }}>
+                <ConflictResolutionPanel
+                  cardId={cardId}
+                  conflictDetail={conflictDetail}
+                  onMergeComplete={handleMergeComplete}
+                  onMergeAbort={handleMergeAbort}
+                />
+              </Box>
+            )}
+            {mergeResult && !mergeResult.success && !conflictDetail && (
               <Alert severity="error" sx={{ mt: 2 }}>
-                <Typography variant="body2" sx={{ mb: 1 }}>
-                  Merge failed: {mergeResult.conflicts.length} conflict(s)
+                <Typography variant="body2">
+                  Merge failed: {mergeResult.message}
                 </Typography>
-                <Box component="ul" sx={{ pl: 2, m: 0 }}>
-                  {mergeResult.conflicts.map((filePath) => (
-                    <Box component="li" key={filePath} sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
-                      {filePath}
-                    </Box>
-                  ))}
-                </Box>
               </Alert>
             )}
           </Section>
