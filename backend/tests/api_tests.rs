@@ -1,8 +1,10 @@
 mod common;
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
 use serde_json::json;
 use std::sync::Arc;
+use tower::ServiceExt;
 
 fn test_config() -> Arc<kanban_backend::config::Config> {
     Arc::new(kanban_backend::config::Config {
@@ -176,6 +178,284 @@ async fn test_auth_refresh_token() {
     assert_eq!(status, StatusCode::OK, "Refresh failed: {}", body);
     let new_auth: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(new_auth["token"].is_string());
+}
+
+#[tokio::test]
+async fn test_update_profile() {
+    let (app, token) = test_app().await;
+
+    let update_body = json!({
+        "nickname": "NewNick",
+        "email": "test@example.com",
+        "first_name": "John",
+        "last_name": "Doe"
+    })
+    .to_string();
+
+    let (status, body) = common::make_request(
+        app.clone(),
+        "PATCH",
+        "/api/auth/me",
+        Some(update_body),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Update profile failed: {}", body);
+
+    let updated: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(updated["nickname"], "NewNick");
+    assert_eq!(updated["email"], "test@example.com");
+    assert_eq!(updated["first_name"], "John");
+    assert_eq!(updated["last_name"], "Doe");
+    assert_eq!(updated["profile_completed"], true);
+    assert!(updated["avatar_url"].is_null());
+
+    let (status, body) = common::make_request(app, "GET", "/api/auth/me", None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "Fetch profile failed: {}", body);
+
+    let me: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(me["nickname"], "NewNick");
+    assert_eq!(me["email"], "test@example.com");
+    assert_eq!(me["first_name"], "John");
+    assert_eq!(me["last_name"], "Doe");
+    assert_eq!(me["profile_completed"], true);
+    assert!(me["avatar_url"].is_null());
+}
+
+#[tokio::test]
+async fn test_update_profile_validation() {
+    let (app, token) = test_app().await;
+
+    let (status, _) = common::make_request(
+        app.clone(),
+        "PATCH",
+        "/api/auth/me",
+        Some(json!({ "nickname": "" }).to_string()),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = common::make_request(
+        app.clone(),
+        "PATCH",
+        "/api/auth/me",
+        Some(json!({ "email": "invalid" }).to_string()),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, body) = common::make_request(
+        app,
+        "PATCH",
+        "/api/auth/me",
+        Some(json!({ "nickname": "Valid" }).to_string()),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Partial profile update failed: {}", body);
+}
+
+#[tokio::test]
+async fn test_upload_and_get_avatar() {
+    let (app, token) = test_app().await;
+
+    let boundary = "XBOUNDARY123456";
+    let png_data = vec![
+        0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
+        b'D', b'R',
+    ];
+
+    let mut multipart_body = Vec::new();
+    multipart_body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    multipart_body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"avatar\"; filename=\"test.png\"\r\n",
+    );
+    multipart_body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+    multipart_body.extend_from_slice(&png_data);
+    multipart_body.extend_from_slice(b"\r\n");
+    multipart_body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/auth/me/avatar")
+        .header("Authorization", format!("Bearer {}", token))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={}", boundary),
+        )
+        .body(Body::from(multipart_body))
+        .expect("Failed to build avatar upload request");
+
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("Avatar upload request failed unexpectedly");
+    let status = response.status();
+    let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("Failed to read avatar upload response body");
+    let body = String::from_utf8(response_body.to_vec()).expect("Upload response body is not UTF-8");
+
+    assert_eq!(status, StatusCode::OK, "Avatar upload failed: {}", body);
+    let user: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let avatar_url = user["avatar_url"]
+        .as_str()
+        .expect("avatar_url should be a non-null string after upload");
+
+    let get_avatar_request = Request::builder()
+        .method("GET")
+        .uri(avatar_url)
+        .body(Body::empty())
+        .expect("Failed to build avatar fetch request");
+
+    let avatar_response = app
+        .clone()
+        .oneshot(get_avatar_request)
+        .await
+        .expect("Avatar fetch request failed unexpectedly");
+    let avatar_status = avatar_response.status();
+    let avatar_content_type = avatar_response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
+    assert_eq!(avatar_status, StatusCode::OK);
+    assert_eq!(avatar_content_type, "image/png");
+
+    let missing_avatar_request = Request::builder()
+        .method("GET")
+        .uri("/api/users/nonexistent/avatar")
+        .body(Body::empty())
+        .expect("Failed to build missing avatar request");
+    let missing_avatar_response = app
+        .oneshot(missing_avatar_request)
+        .await
+        .expect("Missing avatar request failed unexpectedly");
+    assert_eq!(missing_avatar_response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_change_password() {
+    let (app, token) = test_app().await;
+
+    let change_body = json!({
+        "current_password": "TestPass123",
+        "new_password": "NewPass123"
+    })
+    .to_string();
+
+    let (status, body) = common::make_request(
+        app.clone(),
+        "PATCH",
+        "/api/auth/me/password",
+        Some(change_body),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Change password failed: {}", body);
+
+    let (status, body) = common::make_request(
+        app.clone(),
+        "POST",
+        "/api/auth/login",
+        Some(
+            json!({
+                "username": "test_user",
+                "password": "NewPass123"
+            })
+            .to_string(),
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Login with new password failed: {}", body);
+
+    let (status, _) = common::make_request(
+        app,
+        "POST",
+        "/api/auth/login",
+        Some(
+            json!({
+                "username": "test_user",
+                "password": "TestPass123"
+            })
+            .to_string(),
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_change_password_validation() {
+    let (app, token) = test_app().await;
+
+    let (status, _) = common::make_request(
+        app.clone(),
+        "PATCH",
+        "/api/auth/me/password",
+        Some(
+            json!({
+                "current_password": "WrongPassword123",
+                "new_password": "NewPass123"
+            })
+            .to_string(),
+        ),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = common::make_request(
+        app,
+        "PATCH",
+        "/api/auth/me/password",
+        Some(
+            json!({
+                "current_password": "TestPass123",
+                "new_password": "short"
+            })
+            .to_string(),
+        ),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_profile_completed_flag() {
+    let (app, token) = test_app().await;
+
+    let (status, body) = common::make_request(
+        app.clone(),
+        "GET",
+        "/api/auth/me",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Fetch profile failed: {}", body);
+    let me: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(me["profile_completed"], false);
+
+    let (status, body) = common::make_request(
+        app,
+        "PATCH",
+        "/api/auth/me",
+        Some(json!({ "email": "test@example.com" }).to_string()),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Update profile failed: {}", body);
+    let updated: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(updated["profile_completed"], true);
 }
 
 // ---------------------------------------------------------------------------
