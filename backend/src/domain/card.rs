@@ -84,6 +84,7 @@ pub struct Comment {
     pub card_id: String,
     pub author: String,
     pub content: String,
+    pub user_id: Option<String>,
     pub created_at: String,
 }
 

@@ -125,7 +125,11 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         )
         .route("/api/auth/register", post(auth::handlers::register))
         .route("/api/auth/login", post(auth::handlers::login))
-        .route("/api/auth/refresh", post(auth::handlers::refresh));
+        .route("/api/auth/refresh", post(auth::handlers::refresh))
+        .route(
+            "/api/auth/avatar/{user_id}",
+            get(auth::handlers::get_avatar),
+        );
 
     let protected_routes = Router::new()
         .route(
@@ -134,6 +138,10 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         )
         .route("/api/pick-files", post(handlers::picker::pick_files))
         .route("/api/auth/me", get(auth::handlers::me))
+        .route(
+            "/api/auth/avatar",
+            post(auth::handlers::upload_avatar).delete(auth::handlers::delete_avatar),
+        )
         .route("/ws/events", get(handlers::ws::ws_events_handler))
         .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))
         .route("/api/board", get(handlers::cards::get_board))

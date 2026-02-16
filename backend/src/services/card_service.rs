@@ -471,12 +471,13 @@ impl CardService {
         let author = req.author.unwrap_or_else(|| "user".into());
 
         sqlx::query(
-            "INSERT INTO comments (id, card_id, author, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO comments (id, card_id, author, content, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(card_id)
         .bind(&author)
         .bind(&req.content)
+        .bind(&req.user_id)
         .bind(&now)
         .execute(pool)
         .await?;

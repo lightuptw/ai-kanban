@@ -167,4 +167,6 @@ pub struct CreateCommentRequest {
     pub content: String,
     #[serde(default)]
     pub author: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
 }

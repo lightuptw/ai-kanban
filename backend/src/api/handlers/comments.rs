@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     Json,
 };
@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::api::dto::CreateCommentRequest;
 use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
+use crate::auth::middleware::AuthUser;
 use crate::domain::{Comment, KanbanError};
 use crate::services::CardService;
 
@@ -33,10 +34,14 @@ pub async fn get_comments(
 
 pub async fn create_comment(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(card_id): Path<String>,
-    Json(req): Json<CreateCommentRequest>,
+    Json(mut req): Json<CreateCommentRequest>,
 ) -> Result<(StatusCode, Json<Comment>), KanbanError> {
     let pool = state.require_db()?;
+    if req.user_id.is_none() {
+        req.user_id = Some(auth_user.user_id);
+    }
     let comment = CardService::create_comment(pool, &card_id, req).await?;
 
     let event = WsEvent::CommentCreated {
