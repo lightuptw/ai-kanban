@@ -344,6 +344,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    fetchAPI<{ message: string }>("/api/auth/me/password", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
   uploadAvatar: (file: File) => {
     const formData = new FormData();
     formData.append("avatar", file);

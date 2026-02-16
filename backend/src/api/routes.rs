@@ -141,6 +141,10 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             "/api/auth/me",
             get(auth::handlers::me).patch(auth::handlers::update_profile),
         )
+        .route(
+            "/api/auth/me/password",
+            patch(auth::handlers::change_password),
+        )
         .route("/api/auth/me/avatar", post(auth::handlers::upload_avatar))
         .route("/ws/events", get(handlers::ws::ws_events_handler))
         .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))

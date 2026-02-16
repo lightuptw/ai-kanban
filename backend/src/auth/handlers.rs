@@ -40,6 +40,12 @@ pub struct UpdateProfileRequest {
     pub email: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
     pub token: String,
@@ -383,6 +389,54 @@ pub async fn update_profile(
         .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
 
     Ok(Json(user))
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthUser>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<serde_json::Value>, KanbanError> {
+    if req.new_password.len() < 8 {
+        return Err(KanbanError::BadRequest(
+            "Password must be at least 8 characters".into(),
+        ));
+    }
+
+    let db = state.require_db()?;
+    let password_hash: Option<(String,)> =
+        sqlx::query_as("SELECT password_hash FROM users WHERE id = ?")
+            .bind(&auth_user.user_id)
+            .fetch_optional(db)
+            .await?;
+
+    let current_hash = password_hash
+        .map(|(hash,)| hash)
+        .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
+
+    let valid = password::verify_password(&req.current_password, &current_hash)
+        .map_err(|e| KanbanError::Internal(format!("Failed to verify password: {}", e)))?;
+    if !valid {
+        return Err(KanbanError::Unauthorized("Current password is incorrect".into()));
+    }
+
+    let new_hash = password::hash_password(&req.new_password)
+        .map_err(|e| KanbanError::Internal(format!("Failed to hash password: {}", e)))?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let result = sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+        .bind(new_hash)
+        .bind(now)
+        .bind(&auth_user.user_id)
+        .execute(db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(KanbanError::NotFound("User not found".into()));
+    }
+
+    Ok(Json(serde_json::json!({
+        "message": "Password changed successfully"
+    })))
 }
 
 pub async fn upload_avatar(

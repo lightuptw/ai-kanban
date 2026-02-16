@@ -15,6 +15,7 @@ import Footer from "../components/Footer";
 import Settings from "../components/Settings";
 import NotificationSnackbar from "../components/NotificationSnackbar";
 import UserStatusWidget from "../components/UserStatusWidget";
+import UserProfileDialog from "../components/UserProfileDialog";
 import { requestNotificationPermission } from "../utils/browserNotifications";
 
 const drawerWidth = 258;
@@ -108,6 +109,7 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
       </AppContent>
       <Settings />
       <UserStatusWidget onClick={() => setProfileOpen(true)} />
+      <UserProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} />
       <NotificationSnackbar />
     </Root>
   );
