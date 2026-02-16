@@ -89,6 +89,18 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         .route(
             "/{id}/settings/auto-detect",
             post(handlers::board_settings::auto_detect_board_settings),
+        )
+        .route(
+            "/{id}/settings/clone-repo",
+            post(handlers::board_settings::clone_repo),
+        )
+        .route(
+            "/{id}/settings/auto-detect-status",
+            get(handlers::board_settings::get_auto_detect_status),
+        )
+        .route(
+            "/{id}/settings/auto-detect-logs",
+            get(handlers::board_settings::get_auto_detect_logs),
         );
 
     let file_routes = Router::new().route(

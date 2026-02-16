@@ -35,6 +35,13 @@ pub enum SseEvent {
     AgentLogCreated { card_id: String, log: AgentLog },
     QuestionCreated { card_id: String, question: serde_json::Value },
     QuestionAnswered { card_id: String, question: serde_json::Value },
+    AutoDetectStatus {
+        board_id: String,
+        status: String,
+        session_id: Option<String>,
+        elapsed_seconds: Option<u64>,
+        message: Option<String>,
+    },
 }
 
 pub async fn sse_handler(
