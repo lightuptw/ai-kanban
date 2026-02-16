@@ -161,6 +161,9 @@ export interface BoardSettings {
   ai_concurrency: number;
   codebase_path: string;
   github_repo: string;
+  auto_detect_status: string;
+  auto_detect_session_id: string;
+  auto_detect_started_at: string;
   context_markdown: string;
   document_links: string;
   variables: string;

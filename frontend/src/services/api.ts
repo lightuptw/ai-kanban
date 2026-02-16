@@ -237,10 +237,27 @@ export const api = {
     }),
 
   autoDetectBoardSettings: (boardId: string, codebasePath: string) =>
-    fetchAPI<{ status: string }>(`/api/boards/${boardId}/settings/auto-detect`, {
+    fetchAPI<{ status: string; session_id?: string }>(`/api/boards/${boardId}/settings/auto-detect`, {
       method: "POST",
       body: JSON.stringify({ codebase_path: codebasePath }),
     }),
+
+  cloneRepo: (boardId: string, githubUrl: string, clonePath: string, pat?: string) =>
+    fetchAPI<{ success: boolean; codebase_path?: string; error?: string }>(
+      `/api/boards/${boardId}/settings/clone-repo`,
+      {
+        method: "POST",
+        body: JSON.stringify({ github_url: githubUrl, clone_path: clonePath, pat }),
+      }
+    ),
+
+  getAutoDetectStatus: (boardId: string) =>
+    fetchAPI<{ status: string; session_id: string; started_at: string }>(
+      `/api/boards/${boardId}/settings/auto-detect-status`
+    ),
+
+  getAutoDetectLogs: (boardId: string, sessionId: string) =>
+    fetchAPI<any>(`/api/boards/${boardId}/settings/auto-detect-logs?session_id=${sessionId}`),
 
   pickDirectory: () =>
     fetchAPI<{ path: string | null; paths: string[] }>("/api/pick-directory", { method: "POST" }),

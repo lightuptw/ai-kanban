@@ -45,6 +45,7 @@ const baseState = {
   boards: [],
   activeBoardId: null,
   boardsLoading: false,
+  autoDetectStatus: {},
 };
 
 describe("kanbanSlice", () => {

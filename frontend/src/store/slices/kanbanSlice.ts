@@ -10,6 +10,7 @@ interface KanbanState {
   boards: Board[];
   activeBoardId: string | null;
   boardsLoading: boolean;
+  autoDetectStatus: Record<string, { status: string; startedAt: number }>;
 }
 
 const initialState: KanbanState = {
@@ -27,6 +28,7 @@ const initialState: KanbanState = {
   boards: [],
   activeBoardId: null,
   boardsLoading: false,
+  autoDetectStatus: {},
 };
 
 export const fetchBoard = createAsyncThunk("kanban/fetchBoard", async (boardId?: string) => {
@@ -100,6 +102,20 @@ const kanbanSlice = createSlice({
     },
     setActiveBoard: (state, action: PayloadAction<string>) => {
       state.activeBoardId = action.payload;
+    },
+    setAutoDetectStatus: (
+      state,
+      action: PayloadAction<{ boardId: string; status: string; startedAt?: number }>
+    ) => {
+      const { boardId, status, startedAt } = action.payload;
+      if (status === "running") {
+        state.autoDetectStatus[boardId] = { status, startedAt: startedAt || Date.now() };
+      } else {
+        state.autoDetectStatus[boardId] = {
+          status,
+          startedAt: state.autoDetectStatus[boardId]?.startedAt || Date.now(),
+        };
+      }
     },
     optimisticMoveCard: (
       state,
@@ -291,7 +307,7 @@ const kanbanSlice = createSlice({
   },
 });
 
-export const { setSelectedCard, setActiveBoard, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards, updateCardAiStatus, moveCardInStore, updateBoardFromSSE, removeBoardFromSSE } =
+export const { setSelectedCard, setActiveBoard, setAutoDetectStatus, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards, updateCardAiStatus, moveCardInStore, updateBoardFromSSE, removeBoardFromSSE } =
   kanbanSlice.actions;
 
 export default kanbanSlice.reducer;

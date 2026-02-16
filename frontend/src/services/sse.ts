@@ -5,6 +5,7 @@ import {
   moveCardInStore,
   updateBoardFromSSE,
   removeBoardFromSSE,
+  setAutoDetectStatus,
   fetchBoard,
   fetchBoards,
 } from "../store/slices/kanbanSlice";
@@ -198,6 +199,19 @@ export class SSEManager {
         {
           const boardId = this.getState().kanban.activeBoardId;
           if (boardId) this.dispatch(fetchBoard(boardId));
+        }
+        break;
+
+      case "autoDetectStatus":
+      case "AutoDetectStatus":
+        if (event.board_id) {
+          this.dispatch(
+            setAutoDetectStatus({
+              boardId: event.board_id,
+              status: event.status,
+            })
+          );
+          window.dispatchEvent(new CustomEvent("autoDetectStatus", { detail: event }));
         }
         break;
 

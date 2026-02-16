@@ -161,6 +161,7 @@ interface SortableBoardItemProps {
   isActive: boolean;
   activeSessionCount?: number;
   activeUserInitial?: string;
+  boardAutoDetecting?: boolean;
   onSelect: () => void;
   onSettings?: (board: Board) => void;
 }
@@ -182,7 +183,11 @@ const BoardNameRow = styled.div`
   min-width: 0;
 `;
 
-const BoardLarsonTrack = styled.div`
+interface BoardLarsonTrackProps {
+  color?: string;
+}
+
+const BoardLarsonTrack = styled.div<BoardLarsonTrackProps>`
   position: relative;
   height: 2px;
   width: 100%;
@@ -198,8 +203,8 @@ const BoardLarsonTrack = styled.div`
     width: 12px;
     height: 100%;
     border-radius: 999px;
-    background: #36c06a;
-    box-shadow: 0 0 8px rgba(54, 192, 106, 0.75);
+    background: ${(props) => props.color || "#36c06a"};
+    box-shadow: 0 0 8px ${(props) => `${props.color || "#36c06a"}bf`};
     animation: ${sidebarLarsonSweep} 1.5s ease-in-out infinite;
   }
 `;
@@ -209,6 +214,7 @@ const SortableBoardItem: React.FC<SortableBoardItemProps> = ({
   isActive,
   activeSessionCount = 0,
   activeUserInitial,
+  boardAutoDetecting = false,
   onSelect,
   onSettings,
 }) => {
@@ -249,7 +255,9 @@ const SortableBoardItem: React.FC<SortableBoardItemProps> = ({
                   </Avatar>
                 )}
               </BoardNameRow>
-              {activeSessionCount > 0 && <BoardLarsonTrack />}
+              {(activeSessionCount > 0 || boardAutoDetecting) && (
+                <BoardLarsonTrack color={boardAutoDetecting && activeSessionCount === 0 ? "#1565c0" : undefined} />
+              )}
             </BoardNameWrap>
           }
           primaryTypographyProps={{ fontSize: "0.875rem", noWrap: true }}
@@ -314,6 +322,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const dispatch = useDispatch<AppDispatch>();
   const { boards, activeBoardId, columns } = useSelector((state: RootState) => state.kanban);
+  const autoDetectStatus = useSelector((state: RootState) => state.kanban.autoDetectStatus);
   const [addingBoard, setAddingBoard] = useState(false);
   const [newBoardName, setNewBoardName] = useState("");
   const [settingsBoard, setSettingsBoard] = useState<Board | null>(null);
@@ -387,6 +396,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   board={board}
                   isActive={board.id === activeBoardId}
                   activeSessionCount={board.id === activeBoardId ? activeSessionCount : 0}
+                  boardAutoDetecting={autoDetectStatus[board.id]?.status === "running"}
                   activeUserInitial={board.id === activeBoardId ? userInitial : ""}
                   onSelect={() => dispatch(setActiveBoard(board.id))}
                   onSettings={(selectedBoard) => setSettingsBoard(selectedBoard)}

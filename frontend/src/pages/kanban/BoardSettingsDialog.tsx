@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import styled from "@emotion/styled";
+import { keyframes } from "@emotion/react";
 import {
   Alert,
   Box,
   Button,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -11,6 +14,7 @@ import {
   IconButton,
   InputLabel,
   MenuItem,
+  Paper,
   Select,
   Snackbar,
   Tab,
@@ -23,6 +27,8 @@ import {
   AttachFile as AttachFileIcon,
   AutoFixHigh as AutoFixHighIcon,
   Close as CloseIcon,
+  ExpandLess as ExpandLessIcon,
+  ExpandMore as ExpandMoreIcon,
   FolderOpen as FolderOpenIcon,
   HelpOutline as HelpOutlineIcon,
 } from "@mui/icons-material";
@@ -73,6 +79,33 @@ const toEditableSettings = (settings: BoardSettings): EditableBoardSettings => (
   infrastructure: settings.infrastructure || "",
 });
 
+const miniLarsonSweep = keyframes`
+  0%, 100% { left: 0; }
+  50% { left: calc(100% - 16px); }
+`;
+
+interface MiniLarsonScannerProps {
+  scannerColor?: string;
+}
+
+const MiniLarsonScanner = styled.div<MiniLarsonScannerProps>`
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  &::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 100%;
+    background: ${(props) => props.scannerColor || "#1565c0"};
+    border-radius: 50%;
+    box-shadow: 0 0 4px 2px ${(props) => `${props.scannerColor || "#1565c0"}99`};
+    animation: ${miniLarsonSweep} 2s ease-in-out infinite;
+  }
+`;
+
 const FieldLabel: React.FC<{ label: string; tooltip: string }> = ({ label, tooltip }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
     <Typography variant="subtitle2">{label}</Typography>
@@ -93,6 +126,17 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
   const [settings, setSettings] = useState<EditableBoardSettings>(EMPTY_SETTINGS);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
+
+  const [autoDetectStatus, setLocalAutoDetectStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
+  const [autoDetectSessionId, setAutoDetectSessionId] = useState<string | null>(null);
+  const [autoDetectStartTime, setAutoDetectStartTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [showLogs, setShowLogs] = useState(false);
+  const [autoDetectLogs, setAutoDetectLogs] = useState<string[]>([]);
+  const [clonePath, setClonePath] = useState("");
+  const [showPat, setShowPat] = useState(false);
+  const [pat, setPat] = useState("");
+  const [cloneLoading, setCloneLoading] = useState(false);
 
   const loadedSettingsRef = useRef<EditableBoardSettings | null>(null);
 
@@ -115,6 +159,16 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
         const mapped = toEditableSettings(response);
         loadedSettingsRef.current = mapped;
         setSettings(mapped);
+
+        if (response.auto_detect_status === "running") {
+          setLocalAutoDetectStatus("running");
+          setAutoDetectSessionId(response.auto_detect_session_id || null);
+          if (response.auto_detect_started_at) {
+            const started = new Date(response.auto_detect_started_at).getTime();
+            setAutoDetectStartTime(started);
+            setElapsedSeconds(Math.floor((Date.now() - started) / 1000));
+          }
+        }
       } catch {
         if (!cancelled) {
           setSaveState("error");
@@ -173,16 +227,116 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
     };
   }, [boardId, loading, open, settings, settingsHash]);
 
+  useEffect(() => {
+    if (autoDetectStatus !== "running" || !autoDetectStartTime) {
+      return;
+    }
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - autoDetectStartTime) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [autoDetectStatus, autoDetectStartTime]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.board_id !== boardId) {
+        return;
+      }
+      if (detail.status === "completed") {
+        setLocalAutoDetectStatus("completed");
+        api.getBoardSettings(boardId).then((response) => {
+          const mapped = toEditableSettings(response);
+          loadedSettingsRef.current = mapped;
+          setSettings(mapped);
+        });
+      } else if (detail.status === "failed") {
+        setLocalAutoDetectStatus("failed");
+      } else if (detail.status === "running") {
+        setLocalAutoDetectStatus("running");
+        if (detail.session_id) {
+          setAutoDetectSessionId(detail.session_id);
+        }
+        if (!autoDetectStartTime) {
+          setAutoDetectStartTime(Date.now());
+        }
+      }
+    };
+    window.addEventListener("autoDetectStatus", handler);
+    return () => window.removeEventListener("autoDetectStatus", handler);
+  }, [autoDetectStartTime, boardId]);
+
+  useEffect(() => {
+    if (autoDetectStatus !== "running" || !showLogs || !autoDetectSessionId) {
+      return;
+    }
+    const interval = setInterval(async () => {
+      try {
+        const data = await api.getAutoDetectLogs(boardId, autoDetectSessionId);
+        if (data?.messages) {
+          const logs = data.messages
+            .filter((m: any) => m.role === "assistant")
+            .map((m: any) =>
+              typeof m.content === "string" ? m.content : JSON.stringify(m.content)
+            );
+          setAutoDetectLogs(logs);
+        }
+      } catch {
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [autoDetectStatus, showLogs, autoDetectSessionId, boardId]);
+
+  const formatElapsed = (seconds: number): string => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
   const handleAutoDetect = async () => {
     if (!settings.codebase_path.trim()) {
       return;
     }
 
     try {
-      await api.autoDetectBoardSettings(boardId, settings.codebase_path);
-      setSnackbarMessage("AI is analyzing your codebase...");
+      const response = await api.autoDetectBoardSettings(boardId, settings.codebase_path);
+      setLocalAutoDetectStatus("running");
+      setAutoDetectStartTime(Date.now());
+      setElapsedSeconds(0);
+      setShowLogs(false);
+      setAutoDetectLogs([]);
+      if (response.session_id) {
+        setAutoDetectSessionId(response.session_id);
+      }
     } catch {
-      setSnackbarMessage("Failed to queue auto-detect.");
+      setSnackbarMessage("Failed to start auto-detect.");
+    }
+  };
+
+  const handleCloneRepo = async () => {
+    if (!settings.github_repo.trim() || !clonePath.trim()) {
+      return;
+    }
+    const confirmed = window.confirm(`Clone ${settings.github_repo} to ${clonePath}?`);
+    if (!confirmed) {
+      return;
+    }
+    setCloneLoading(true);
+    try {
+      const result = await api.cloneRepo(boardId, settings.github_repo, clonePath, pat || undefined);
+      if (result.success) {
+        setSettings((prev) => ({ ...prev, codebase_path: result.codebase_path || clonePath }));
+        setSnackbarMessage("Repository cloned successfully!");
+      } else if (result.error === "auth_required") {
+        setShowPat(true);
+        setSnackbarMessage("Authentication required. Please provide a Personal Access Token.");
+      } else {
+        setSnackbarMessage(`Clone failed: ${result.error}`);
+      }
+    } catch {
+      setSnackbarMessage("Failed to clone repository.");
+    } finally {
+      setCloneLoading(false);
     }
   };
 
@@ -191,6 +345,17 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
       const result = await api.pickDirectory();
       if (result.path) {
         setSettings((prev) => ({ ...prev, codebase_path: result.path || "" }));
+      }
+    } catch {
+      setSnackbarMessage("Could not open folder picker.");
+    }
+  };
+
+  const handlePickClonePath = async () => {
+    try {
+      const result = await api.pickDirectory();
+      if (result.path) {
+        setClonePath(result.path);
       }
     } catch {
       setSnackbarMessage("Could not open folder picker.");
@@ -265,12 +430,196 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
               </Alert>
 
               <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 3 }}>
-                <Tab label="General" />
+                <Tab
+                  icon={<AutoFixHighIcon fontSize="small" />}
+                  iconPosition="start"
+                  label="Auto-Detect"
+                  sx={{ color: "#1565c0", "&.Mui-selected": { color: "#1565c0" } }}
+                />
+                <Tab label="Basic" />
                 <Tab label="Technical" />
                 <Tab label="Conventions" />
               </Tabs>
 
               {tab === 0 && (
+                <Box sx={{ display: "grid", gap: 2.5 }}>
+                  <Box sx={{ p: 2, borderRadius: 1, bgcolor: "action.hover", border: "1px solid", borderColor: "divider" }}>
+                    <Typography variant="body1" color="text.secondary">
+                      Tired of typing all details? Let AI analyze your codebase and fill everything in.
+                    </Typography>
+                  </Box>
+
+                  <Box>
+                    <FieldLabel
+                      label="Codebase Path"
+                      tooltip="The folder path where your project code lives on the server. AI uses this to know where to look for files and run commands. Example: /home/user/projects/my-saas-app"
+                    />
+                    <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
+                      <TextField
+                        fullWidth
+                        label="Codebase Path"
+                        value={settings.codebase_path}
+                        onChange={(event) => updateField("codebase_path", event.target.value)}
+                        placeholder="/home/user/projects/my-app"
+                        InputLabelProps={{ shrink: true }}
+                      />
+                      <IconButton onClick={handlePickCodebasePath} sx={{ mt: 1 }}>
+                        <FolderOpenIcon />
+                      </IconButton>
+                    </Box>
+                  </Box>
+
+                  <Box>
+                    <FieldLabel
+                      label="GitHub Repository"
+                      tooltip="Link to your project's GitHub repository. Optionally clone it directly, then run auto-detect against the cloned path."
+                    />
+                    <TextField
+                      fullWidth
+                      label="GitHub URL"
+                      value={settings.github_repo}
+                      onChange={(event) => updateField("github_repo", event.target.value)}
+                      placeholder="https://github.com/org/repo"
+                      InputLabelProps={{ shrink: true }}
+                    />
+
+                    {settings.github_repo.trim() && (
+                      <Box
+                        sx={{
+                          mt: 1.5,
+                          display: "grid",
+                          gap: 1.5,
+                          pl: 2,
+                          borderLeft: "2px solid",
+                          borderColor: "divider",
+                        }}
+                      >
+                        <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Clone to (local path)"
+                            value={clonePath}
+                            onChange={(event) => setClonePath(event.target.value)}
+                            placeholder="/home/user/projects/cloned-repo"
+                            InputLabelProps={{ shrink: true }}
+                          />
+                          <IconButton onClick={handlePickClonePath} size="small">
+                            <FolderOpenIcon />
+                          </IconButton>
+                        </Box>
+
+                        {showPat && (
+                          <TextField
+                            fullWidth
+                            size="small"
+                            type="password"
+                            label="Personal Access Token"
+                            value={pat}
+                            onChange={(event) => setPat(event.target.value)}
+                            helperText="Required for private repos. Generate at github.com/settings/tokens"
+                            InputLabelProps={{ shrink: true }}
+                          />
+                        )}
+
+                        {!showPat && (
+                          <Typography
+                            variant="caption"
+                            sx={{ cursor: "pointer", color: "primary.main", "&:hover": { textDecoration: "underline" } }}
+                            onClick={() => setShowPat(true)}
+                          >
+                            Private repo? Click to add authentication
+                          </Typography>
+                        )}
+
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={handleCloneRepo}
+                          disabled={!clonePath.trim() || cloneLoading}
+                          startIcon={cloneLoading ? <CircularProgress size={16} /> : undefined}
+                        >
+                          {cloneLoading ? "Cloning..." : "Clone Repository"}
+                        </Button>
+                      </Box>
+                    )}
+                  </Box>
+
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    size="large"
+                    startIcon={<AutoFixHighIcon />}
+                    onClick={handleAutoDetect}
+                    disabled={!settings.codebase_path.trim() || autoDetectStatus === "running"}
+                    sx={{ bgcolor: "#1565c0", "&:hover": { bgcolor: "#0d47a1" }, py: 1.5, fontSize: "1rem" }}
+                  >
+                    {autoDetectStatus === "running" ? "Analysis in Progress..." : "Auto-Detect Codebase"}
+                  </Button>
+
+                  {autoDetectStatus !== "idle" && (
+                    <Box sx={{ display: "grid", gap: 1.5 }}>
+                      {autoDetectStatus === "running" && <MiniLarsonScanner scannerColor="#1565c0" />}
+
+                      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <Typography variant="body2" color={autoDetectStatus === "failed" ? "error" : "text.secondary"}>
+                          {autoDetectStatus === "running"
+                            ? "AI is analyzing your codebase..."
+                            : autoDetectStatus === "completed"
+                            ? "Analysis complete! Settings have been updated."
+                            : "Analysis failed. Please try again."}
+                        </Typography>
+                        {(autoDetectStatus === "running" || autoDetectStatus === "completed") && (
+                          <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace" }}>
+                            {formatElapsed(elapsedSeconds)}
+                          </Typography>
+                        )}
+                      </Box>
+
+                      {autoDetectSessionId && (
+                        <>
+                          <Button
+                            size="small"
+                            variant="text"
+                            onClick={() => setShowLogs(!showLogs)}
+                            endIcon={showLogs ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                            sx={{ justifyContent: "flex-start" }}
+                          >
+                            {showLogs ? "Hide AI Logs" : "Show AI Logs"}
+                          </Button>
+                          <Collapse in={showLogs}>
+                            <Paper
+                              sx={{
+                                p: 1.5,
+                                bgcolor: "#1a1a2e",
+                                maxHeight: 300,
+                                overflow: "auto",
+                                fontFamily: "monospace",
+                                fontSize: "0.8rem",
+                                color: "#e0e0e0",
+                              }}
+                            >
+                              {autoDetectLogs.length === 0 ? (
+                                <Typography variant="body2" sx={{ color: "#666" }}>
+                                  Waiting for logs...
+                                </Typography>
+                              ) : (
+                                autoDetectLogs.map((log, i) => (
+                                  <Box key={i} sx={{ mb: 0.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                    {log}
+                                  </Box>
+                                ))
+                              )}
+                            </Paper>
+                          </Collapse>
+                        </>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              {tab === 1 && (
                 <Box sx={{ display: "grid", gap: 2 }}>
                   <Box>
                     <FieldLabel
@@ -301,58 +650,6 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
                         <HelpOutlineIcon sx={{ fontSize: 18, color: "warning.main", cursor: "help" }} />
                       </Tooltip>
                     </Box>
-                  </Box>
-
-                  <Box>
-                    <FieldLabel
-                      label="Codebase Path"
-                      tooltip="The folder path where your project code lives on the server. AI uses this to know where to look for files and run commands. Example: /home/user/projects/my-saas-app"
-                    />
-                    <Box sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
-                      <TextField
-                        fullWidth
-                        label="Codebase Path"
-                        value={settings.codebase_path}
-                        onChange={(event) => updateField("codebase_path", event.target.value)}
-                        placeholder="/home/user/projects/my-saas-app"
-                        InputLabelProps={{ shrink: true }}
-                      />
-                      <IconButton onClick={handlePickCodebasePath} sx={{ mt: 1 }} aria-label="Pick codebase directory">
-                        <FolderOpenIcon />
-                      </IconButton>
-                    </Box>
-                    <Box sx={{ mt: 1 }}>
-                      <Tooltip
-                        title="AI will scan your codebase and try to automatically fill in Tech Stack, Communication Patterns, Code Conventions, and other fields based on what it finds in your code."
-                        arrow
-                      >
-                        <span>
-                          <Button
-                            variant="contained"
-                            startIcon={<AutoFixHighIcon />}
-                            onClick={handleAutoDetect}
-                            disabled={!settings.codebase_path.trim()}
-                          >
-                            Auto-detect
-                          </Button>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                  </Box>
-
-                  <Box>
-                    <FieldLabel
-                      label="GitHub Repository"
-                      tooltip="Link to your project's GitHub repository. AI can use this to understand your project structure, check existing issues, and reference documentation. Example: https://github.com/your-org/your-repo"
-                    />
-                    <TextField
-                      fullWidth
-                      label="GitHub Repository"
-                      value={settings.github_repo}
-                      onChange={(event) => updateField("github_repo", event.target.value)}
-                      placeholder="https://github.com/org/repo"
-                      InputLabelProps={{ shrink: true }}
-                    />
                   </Box>
 
                   <Box>
@@ -419,7 +716,7 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
                 </Box>
               )}
 
-              {tab === 1 && (
+              {tab === 2 && (
                 <Box sx={{ display: "grid", gap: 2 }}>
                   <Box>
                     <FieldLabel
@@ -499,7 +796,7 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
                 </Box>
               )}
 
-              {tab === 2 && (
+              {tab === 3 && (
                 <Box sx={{ display: "grid", gap: 2 }}>
                   <Box>
                     <FieldLabel
