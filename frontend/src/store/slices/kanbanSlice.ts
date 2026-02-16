@@ -193,6 +193,23 @@ const kanbanSlice = createSlice({
         state.columns[stage] = state.columns[stage].filter((c) => c.id !== cardId);
       }
     },
+    updateBoardFromSSE: (state, action: PayloadAction<Board>) => {
+      const board = action.payload;
+      const idx = state.boards.findIndex((b) => b.id === board.id);
+      if (idx !== -1) {
+        state.boards[idx] = board;
+      } else {
+        state.boards.push(board);
+        state.boards.sort((a, b) => a.position - b.position);
+      }
+    },
+    removeBoardFromSSE: (state, action: PayloadAction<string>) => {
+      const boardId = action.payload;
+      state.boards = state.boards.filter((b) => b.id !== boardId);
+      if (state.activeBoardId === boardId && state.boards.length > 0) {
+        state.activeBoardId = state.boards[0].id;
+      }
+    },
     optimisticReorderBoards: (state, action: PayloadAction<Board[]>) => {
       state.boards = action.payload;
     },
@@ -274,7 +291,7 @@ const kanbanSlice = createSlice({
   },
 });
 
-export const { setSelectedCard, setActiveBoard, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards, updateCardAiStatus, moveCardInStore } =
+export const { setSelectedCard, setActiveBoard, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards, updateCardAiStatus, moveCardInStore, updateBoardFromSSE, removeBoardFromSSE } =
   kanbanSlice.actions;
 
 export default kanbanSlice.reducer;

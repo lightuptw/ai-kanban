@@ -1,6 +1,15 @@
-import { updateCardFromSSE, removeCardFromSSE, updateCardAiStatus, moveCardInStore } from "../store/slices/kanbanSlice";
-import type { AppDispatch } from "../redux/store";
-import type { Card } from "../types/kanban";
+import {
+  updateCardFromSSE,
+  removeCardFromSSE,
+  updateCardAiStatus,
+  moveCardInStore,
+  updateBoardFromSSE,
+  removeBoardFromSSE,
+  fetchBoard,
+  fetchBoards,
+} from "../store/slices/kanbanSlice";
+import type { AppDispatch, RootState } from "../redux/store";
+import type { Card, Board } from "../types/kanban";
 
 const SSE_URL =
   (import.meta.env.VITE_API_URL ||
@@ -10,11 +19,13 @@ const SSE_URL =
 export class SSEManager {
   private eventSource: EventSource | null = null;
   private dispatch: AppDispatch;
+  private getState: () => RootState;
   private reconnectAttempts = 0;
   private maxReconnectDelay = 30000;
 
-  constructor(dispatch: AppDispatch) {
+  constructor(dispatch: AppDispatch, getState: () => RootState) {
     this.dispatch = dispatch;
+    this.getState = getState;
   }
 
   connect() {
@@ -55,15 +66,30 @@ export class SSEManager {
 
   private handleEvent(event: any) {
     console.log("[SSE] Event received:", event);
+    const eventType = event.type || event.event;
 
-    switch (event.type || event.event) {
+    switch (eventType) {
+      case "cardCreated":
       case "CardCreated":
-      case "CardUpdated":
         if (event.card) {
           this.dispatch(updateCardFromSSE(event.card as Card));
+        } else {
+          const boardId = this.getState().kanban.activeBoardId;
+          if (boardId) this.dispatch(fetchBoard(boardId));
         }
         break;
 
+      case "cardUpdated":
+      case "CardUpdated":
+        if (event.card) {
+          this.dispatch(updateCardFromSSE(event.card as Card));
+        } else {
+          const boardId = this.getState().kanban.activeBoardId;
+          if (boardId) this.dispatch(fetchBoard(boardId));
+        }
+        break;
+
+      case "cardMoved":
       case "CardMoved":
         if (event.card) {
           this.dispatch(updateCardFromSSE(event.card as Card));
@@ -76,6 +102,7 @@ export class SSEManager {
         }
         break;
 
+      case "cardDeleted":
       case "CardDeleted":
         if (event.card_id) {
           this.dispatch(removeCardFromSSE(event.card_id));
@@ -95,18 +122,87 @@ export class SSEManager {
         }
         break;
 
+      case "questionCreated":
       case "QuestionCreated":
+      case "questionAnswered":
       case "QuestionAnswered":
         if (event.card_id) {
           this.dispatch(updateCardAiStatus({
             cardId: event.card_id,
-            status: event.ai_status || (event.type === "QuestionCreated" ? "waiting_input" : "working"),
+            status: event.ai_status || (eventType === "QuestionCreated" || eventType === "questionCreated" ? "waiting_input" : "working"),
           }));
         }
         break;
 
+      case "subtaskCreated":
+      case "SubtaskCreated":
+      case "subtaskUpdated":
+      case "SubtaskUpdated":
+      case "subtaskToggled":
+      case "SubtaskToggled":
+        {
+          const boardId = this.getState().kanban.activeBoardId;
+          if (boardId) this.dispatch(fetchBoard(boardId));
+        }
+        break;
+
+      case "subtaskDeleted":
+      case "SubtaskDeleted":
+        {
+          const boardId = this.getState().kanban.activeBoardId;
+          if (boardId) this.dispatch(fetchBoard(boardId));
+        }
+        break;
+
+      case "commentCreated":
+      case "CommentCreated":
+      case "commentUpdated":
+      case "CommentUpdated":
+      case "commentDeleted":
+      case "CommentDeleted":
+        {
+          const boardId = this.getState().kanban.activeBoardId;
+          if (boardId) this.dispatch(fetchBoard(boardId));
+        }
+        break;
+
+      case "boardCreated":
+      case "BoardCreated":
+        if (event.board) {
+          this.dispatch(updateBoardFromSSE(event.board as Board));
+        } else {
+          this.dispatch(fetchBoards());
+        }
+        break;
+
+      case "boardUpdated":
+      case "BoardUpdated":
+        if (event.board) {
+          this.dispatch(updateBoardFromSSE(event.board as Board));
+        } else {
+          this.dispatch(fetchBoards());
+        }
+        break;
+
+      case "boardDeleted":
+      case "BoardDeleted":
+        if (event.board_id) {
+          this.dispatch(removeBoardFromSSE(event.board_id));
+        }
+        break;
+
+      case "labelAdded":
+      case "LabelAdded":
+      case "labelRemoved":
+      case "LabelRemoved":
+        {
+          const boardId = this.getState().kanban.activeBoardId;
+          if (boardId) this.dispatch(fetchBoard(boardId));
+        }
+        break;
+
       default:
-        console.log("[SSE] Unknown event type:", event.type || event.event);
+        console.log("[SSE] Unknown event type:", eventType);
     }
   }
 

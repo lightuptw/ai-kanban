@@ -28,7 +28,7 @@ function App({ emotionCache = clientSideEmotionCache }) {
 
   useEffect(() => {
     if (!sseManager) {
-      sseManager = new SSEManager(store.dispatch);
+      sseManager = new SSEManager(store.dispatch, store.getState);
       sseManager.connect();
     }
 
