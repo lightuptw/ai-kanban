@@ -139,7 +139,9 @@ impl CardService {
             r#"
             SELECT
                 c.id, c.title, c.description, c.stage, c.position, c.priority,
-                c.ai_status, c.ai_agent, c.created_at, c.updated_at,
+                c.ai_status, c.ai_session_id, c.ai_progress, c.ai_agent,
+                c.working_directory, c.branch_name, c.linked_documents, c.plan_path,
+                c.created_at, c.updated_at,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id), 0) as subtask_count,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id AND s.completed = 1), 0) as subtask_completed,
                 COALESCE((SELECT COUNT(*) FROM card_labels cl WHERE cl.card_id = c.id), 0) as label_count,
@@ -152,7 +154,9 @@ impl CardService {
             r#"
             SELECT
                 c.id, c.title, c.description, c.stage, c.position, c.priority,
-                c.ai_status, c.ai_agent, c.created_at, c.updated_at,
+                c.ai_status, c.ai_session_id, c.ai_progress, c.ai_agent,
+                c.working_directory, c.branch_name, c.linked_documents, c.plan_path,
+                c.created_at, c.updated_at,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id), 0) as subtask_count,
                 COALESCE((SELECT COUNT(*) FROM subtasks s WHERE s.card_id = c.id AND s.completed = 1), 0) as subtask_completed,
                 COALESCE((SELECT COUNT(*) FROM card_labels cl WHERE cl.card_id = c.id), 0) as label_count,
@@ -179,6 +183,8 @@ impl CardService {
 
         for row in rows {
             let stage: String = row.get("stage");
+            let ai_progress_str: String = row.get("ai_progress");
+            let ai_progress = serde_json::from_str(&ai_progress_str).unwrap_or(serde_json::json!({}));
             let summary = CardSummary {
                 id: row.get("id"),
                 title: row.get("title"),
@@ -187,7 +193,13 @@ impl CardService {
                 position: row.get("position"),
                 priority: row.get("priority"),
                 ai_status: row.get("ai_status"),
+                ai_session_id: row.get("ai_session_id"),
+                ai_progress,
                 ai_agent: row.get("ai_agent"),
+                working_directory: row.get("working_directory"),
+                branch_name: row.get("branch_name"),
+                linked_documents: row.get("linked_documents"),
+                plan_path: row.get("plan_path"),
                 subtask_count: row.get("subtask_count"),
                 subtask_completed: row.get("subtask_completed"),
                 label_count: row.get("label_count"),

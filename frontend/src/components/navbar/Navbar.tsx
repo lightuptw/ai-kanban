@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import styled from "@emotion/styled";
 import { withTheme } from "@emotion/react";
 import { useSelector, useDispatch } from "react-redux";
@@ -15,6 +15,8 @@ import { Menu as MenuIcon, Delete as DeleteIcon } from "@mui/icons-material";
 
 import { RootState, AppDispatch } from "../../redux/store";
 import { deleteBoard } from "../../store/slices/kanbanSlice";
+import { fetchNotifications } from "../../store/slices/notificationSlice";
+import NavbarNotificationsDropdown from "./NavbarNotificationsDropdown";
 
 const AppBar = styled(MuiAppBar)`
   background: ${(props) => props.theme.header.background};
@@ -35,6 +37,10 @@ type NavbarProps = {
 const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
   const dispatch = useDispatch<AppDispatch>();
   const { boards, activeBoardId } = useSelector((state: RootState) => state.kanban);
+
+  useEffect(() => {
+    dispatch(fetchNotifications());
+  }, [dispatch]);
   const activeBoard = boards.find((b) => b.id === activeBoardId);
   const boardName = activeBoard?.name || "Kanban Board";
 
@@ -66,6 +72,9 @@ const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
               </Typography>
             </Grid>
             <Grid item xs />
+            <Grid item>
+              <NavbarNotificationsDropdown />
+            </Grid>
             {activeBoardId && (
               <Grid item>
                 <IconButton

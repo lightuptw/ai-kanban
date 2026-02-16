@@ -156,7 +156,7 @@ idle ──> queued ──> dispatched ──> working ──> completed
 | Setting | Source | Default | Description |
 |---------|--------|---------|-------------|
 | `OPENCODE_URL` | Environment | `http://localhost:4096` | OpenCode API endpoint |
-| `KANBAN_API_URL` | MCP env | `http://127.0.0.1:3000` | MCP binary REST API target |
+| `KANBAN_API_URL` | MCP env | `http://127.0.0.1:21547` | MCP binary REST API target |
 | `ai_concurrency` | Settings table | `1` | Max parallel AI cards |
 | `ai_agent` | Per-card field | (none) | Agent persona for the card |
 

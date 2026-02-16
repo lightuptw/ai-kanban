@@ -32,7 +32,24 @@ function App({ emotionCache = clientSideEmotionCache }) {
       wsManager.connect();
     }
 
+    const handleAuthLogin = () => {
+      if (wsManager) {
+        wsManager.connect();
+      }
+    };
+
+    const handleAuthLogout = () => {
+      if (wsManager) {
+        wsManager.disconnect();
+      }
+    };
+
+    window.addEventListener("auth:login", handleAuthLogin);
+    window.addEventListener("auth:logout", handleAuthLogout);
+
     return () => {
+      window.removeEventListener("auth:login", handleAuthLogin);
+      window.removeEventListener("auth:logout", handleAuthLogout);
       if (wsManager) {
         wsManager.disconnect();
         wsManager = null;

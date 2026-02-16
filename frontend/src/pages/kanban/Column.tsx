@@ -2,6 +2,7 @@ import React, { ReactNode } from "react";
 import styled from "@emotion/styled";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import type { Card } from "../../types/kanban";
 import {
   Button,
   Typography as MuiTypography,
@@ -71,7 +72,7 @@ interface ColumnProps {
   id: string;
   title: string;
   color: string;
-  items: any[];
+  items: Card[];
   showAddButton?: boolean;
   onAddCard?: () => void;
   children: ReactNode;

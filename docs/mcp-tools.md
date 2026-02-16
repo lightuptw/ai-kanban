@@ -2,12 +2,12 @@
 
 ## Overview
 
-The kanban MCP server provides 15 tools for AI agents to interact with the kanban board. It operates as a **stateless HTTP proxy** — every tool call is translated into an HTTP request to the backend REST API.
+The kanban MCP server provides 12 tools for AI agents to interact with the kanban board. It operates as a **stateless HTTP proxy** — every tool call is translated into an HTTP request to the backend REST API.
 
 ## Architecture
 
 ```
-AI Agent (opencode) ──stdio──> kanban-mcp binary ──HTTP──> Backend REST API (:3000) ──> SQLite
+AI Agent (opencode) ──stdio──> kanban-mcp binary ──HTTP──> Backend REST API (:21547) ──> SQLite
 ```
 
 The MCP binary has no direct database access. This design ensures:
@@ -28,14 +28,14 @@ In `opencode.json`:
       "command": ["/path/to/kanban-mcp"],
       "enabled": true,
       "environment": {
-        "KANBAN_API_URL": "http://127.0.0.1:3000"
+        "KANBAN_API_URL": "http://127.0.0.1:21547"
       }
     }
   }
 }
 ```
 
-The binary reads `KANBAN_API_URL` from environment (defaults to `http://127.0.0.1:3000`).
+The binary reads `KANBAN_API_URL` from environment (defaults to `http://127.0.0.1:21547`).
 
 ## Binaries
 
@@ -46,13 +46,11 @@ The binary reads `KANBAN_API_URL` from environment (defaults to `http://127.0.0.
 
 ## Tool Reference
 
-### Board Tools
+### Board Tools (consolidated)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `kanban_list_boards` | (none) | List all boards ordered by position |
-| `kanban_create_board` | `{name}` | Create a new board |
-| `kanban_delete_board` | `{board_id}` | Delete a board |
+| `kanban_board` | `{action?, name?, board_id?}` | Manage boards. Actions: "list" (default), "create" (requires name), "delete" (requires board_id) |
 
 ### Card Tools
 
@@ -72,36 +70,48 @@ The binary reads `KANBAN_API_URL` from environment (defaults to `http://127.0.0.
 | `kanban_update_subtask` | `{subtask_id, title?, completed?, position?, phase?, phase_order?}` | Update or check off subtask |
 | `kanban_delete_subtask` | `{subtask_id}` | Delete subtask |
 
-### Comment Tools
+### Comment Tool (consolidated)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `kanban_get_comments` | `{card_id}` | List comments chronologically |
-| `kanban_add_comment` | `{card_id, content, author?}` | Add comment (default author: "AI Agent") |
-| `kanban_update_comment` | `{comment_id, content}` | Update comment content |
-| `kanban_delete_comment` | `{comment_id}` | Delete comment |
+| `kanban_comment` | `{card_id, action?, content?, author?, comment_id?}` | Manage comments. Actions: "add" (default, requires content), "list", "update" (requires comment_id + content), "delete" (requires comment_id) |
+
+### Board Settings Tool (consolidated)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `kanban_board_settings` | `{board_id, action?, codebase_path?, github_repo?, context_markdown?, ...}` | Manage board settings. Actions: "get" (default), "update" (set any settings fields) |
+
+### Question Tool
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `kanban_ask_question` | `{card_id, question, question_type?, options?, multiple?}` | Ask user a question, blocks until answered. Types: "select", "multi_select", "text" |
 
 ## HTTP Proxy Mapping
 
-Each tool maps to a REST API call:
+Each tool action maps to a REST API call:
 
-| Tool | HTTP Method | Endpoint |
-|------|------------|----------|
-| `kanban_list_boards` | GET | `/api/boards` |
-| `kanban_create_board` | POST | `/api/boards` |
-| `kanban_delete_board` | DELETE | `/api/boards/{id}` |
-| `kanban_get_board_cards` | GET | `/api/board?board_id={id}` |
-| `kanban_get_card` | GET | `/api/cards/{id}` |
-| `kanban_create_card` | POST | `/api/cards` |
-| `kanban_update_card` | PATCH | `/api/cards/{id}` |
-| `kanban_delete_card` | DELETE | `/api/cards/{id}` |
-| `kanban_create_subtask` | POST | `/api/cards/{card_id}/subtasks` |
-| `kanban_update_subtask` | PATCH | `/api/subtasks/{id}` |
-| `kanban_delete_subtask` | DELETE | `/api/subtasks/{id}` |
-| `kanban_get_comments` | GET | `/api/cards/{card_id}/comments` |
-| `kanban_add_comment` | POST | `/api/cards/{card_id}/comments` |
-| `kanban_update_comment` | PATCH | `/api/comments/{id}` |
-| `kanban_delete_comment` | DELETE | `/api/comments/{id}` |
+| Tool | Action | HTTP Method | Endpoint |
+|------|--------|------------|----------|
+| `kanban_board` | list | GET | `/api/boards` |
+| `kanban_board` | create | POST | `/api/boards` |
+| `kanban_board` | delete | DELETE | `/api/boards/{id}` |
+| `kanban_get_board_cards` | - | GET | `/api/board?board_id={id}` |
+| `kanban_get_card` | - | GET | `/api/cards/{id}` |
+| `kanban_create_card` | - | POST | `/api/cards` |
+| `kanban_update_card` | - | PATCH | `/api/cards/{id}` |
+| `kanban_delete_card` | - | DELETE | `/api/cards/{id}` |
+| `kanban_create_subtask` | - | POST | `/api/cards/{card_id}/subtasks` |
+| `kanban_update_subtask` | - | PATCH | `/api/subtasks/{id}` |
+| `kanban_delete_subtask` | - | DELETE | `/api/subtasks/{id}` |
+| `kanban_comment` | list | GET | `/api/cards/{card_id}/comments` |
+| `kanban_comment` | add | POST | `/api/cards/{card_id}/comments` |
+| `kanban_comment` | update | PATCH | `/api/comments/{id}` |
+| `kanban_comment` | delete | DELETE | `/api/comments/{id}` |
+| `kanban_board_settings` | get | GET | `/api/boards/{id}/settings` |
+| `kanban_board_settings` | update | PUT | `/api/boards/{id}/settings` |
+| `kanban_ask_question` | - | POST | `/api/cards/{card_id}/questions` |
 
 ## IntoKanbanApiUrl Trait
 
@@ -113,7 +123,7 @@ Send JSON-RPC messages via stdin:
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}' \
-  | KANBAN_API_URL=http://127.0.0.1:3000 ./target/release/kanban-mcp
+  | KANBAN_API_URL=http://127.0.0.1:21547 ./target/release/kanban-mcp
 ```
 
 ## Troubleshooting

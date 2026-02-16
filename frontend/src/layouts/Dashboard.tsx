@@ -13,6 +13,8 @@ import dashboardItems from "../components/sidebar/dashboardItems";
 import Sidebar from "../components/sidebar/Sidebar";
 import Footer from "../components/Footer";
 import Settings from "../components/Settings";
+import NotificationSnackbar from "../components/NotificationSnackbar";
+import { requestNotificationPermission } from "../utils/browserNotifications";
 
 const drawerWidth = 258;
 
@@ -62,10 +64,13 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
     setMobileOpen(!mobileOpen);
   };
 
-  // Close mobile menu when navigation occurs
   useEffect(() => {
     setMobileOpen(false);
   }, [router.pathname]);
+
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
 
   const theme = useTheme();
   const isLgUp = useMediaQuery(theme.breakpoints.up("lg"));
@@ -100,6 +105,7 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
         <Footer />
       </AppContent>
       <Settings />
+      <NotificationSnackbar />
     </Root>
   );
 };

@@ -9,7 +9,8 @@ use kanban_backend::api::{create_router, AppState};
 use kanban_backend::config::Config;
 use kanban_backend::infrastructure::db;
 use kanban_backend::mcp::KanbanMcp;
-use kanban_backend::services::{QueueProcessor, SseRelayService};
+use kanban_backend::services::{OpencodeManager, QueueProcessor, SseRelayService};
+use kanban_backend::services::opencode_manager::OpencodeStatus;
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpService,
 };
@@ -52,6 +53,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+
+    let opencode_mgr = OpencodeManager::new(&config.opencode_url);
+    match opencode_mgr.ensure_running().await {
+        OpencodeStatus::AlreadyRunning => {}
+        OpencodeStatus::Started => {
+            tracing::info!("opencode server started automatically");
+        }
+        OpencodeStatus::Failed(e) => {
+            tracing::warn!("opencode auto-start failed: {e} — AI features unavailable until opencode is started manually");
+        }
+    }
 
     let (sse_tx, _rx) = broadcast::channel::<String>(100);
     let http_client = reqwest::Client::new();

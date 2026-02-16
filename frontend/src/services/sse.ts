@@ -11,8 +11,40 @@ import {
   updateCardCommentFromWS,
   removeCardCommentFromWS,
 } from "../store/slices/kanbanSlice";
+import { addNotificationFromWS } from "../store/slices/notificationSlice";
 import type { AppDispatch, RootState } from "../redux/store";
-import type { Card, Board } from "../types/kanban";
+import type { Card, Board, Notification } from "../types/kanban";
+import { API_BASE_URL } from "../constants";
+
+/** Shape of WebSocket event payloads from the backend. */
+interface WsEventData {
+  type: string;
+  card?: Card;
+  card_id?: string;
+  board?: Board;
+  board_id?: string;
+  from_stage?: string;
+  to_stage?: string;
+  status?: string;
+  progress?: string | Record<string, unknown>;
+  stage?: string;
+  ai_session_id?: string | null;
+  ai_status?: string;
+  subtask?: { id: string; completed: boolean };
+  subtask_id?: string;
+  comment?: { id: string; card_id: string; author: string; content: string; created_at: string };
+  comment_id?: string;
+  label_id?: string;
+  session_id?: string;
+  elapsed_seconds?: number;
+  message?: string;
+  question?: Record<string, unknown>;
+  notification?: Notification;
+}
+
+const WS_DEBUG = import.meta.env.DEV;
+const wsLog = (...args: unknown[]) => WS_DEBUG && console.log(...args);
+const wsError = (...args: unknown[]) => WS_DEBUG && console.error(...args);
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;
@@ -42,21 +74,19 @@ export class WebSocketManager {
 
     const token = localStorage.getItem("token") || "";
     if (!token) {
-      console.log("[WS] No auth token, skipping connection");
+      wsLog("[WS] No auth token, skipping connection");
       return;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = import.meta.env.VITE_API_URL
-      ? new URL(import.meta.env.VITE_API_URL).host
-      : `${window.location.hostname}:21547`;
-    const wsUrl = `${protocol}//${host}/ws/events?token=${encodeURIComponent(token)}`;
+    const apiUrl = new URL(API_BASE_URL);
+    const protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${apiUrl.host}/ws/events?token=${encodeURIComponent(token)}`;
 
-    console.log("[WS] Connecting to", wsUrl);
+    wsLog("[WS] Connecting to", wsUrl);
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
-      console.log("[WS] Connected");
+      wsLog("[WS] Connected");
       this.reconnectAttempts = 0;
     };
 
@@ -65,24 +95,24 @@ export class WebSocketManager {
         const data = JSON.parse(event.data);
         this.handleEvent(data);
       } catch (error) {
-        console.error("[WS] Failed to parse event:", error);
+        wsError("[WS] Failed to parse event:", error);
       }
     };
 
     this.ws.onclose = () => {
-      console.log("[WS] Connection closed");
+      wsLog("[WS] Connection closed");
       if (!this.isManualDisconnect) {
         this.reconnect();
       }
     };
 
     this.ws.onerror = (error) => {
-      console.error("[WS] Error:", error);
+      wsError("[WS] Error:", error);
     };
   }
 
-  private handleEvent(event: any) {
-    console.log("[WS] Event:", event.type);
+  private handleEvent(event: WsEventData) {
+    wsLog("[WS] Event:", event.type);
     const eventType = event.type;
 
     switch (eventType) {
@@ -148,10 +178,16 @@ export class WebSocketManager {
       case "subtaskUpdated":
       case "subtaskToggled":
         if (event.card_id && event.subtask) {
+          const subtaskEventMap: Record<string, "created" | "updated" | "toggled"> = {
+            subtaskCreated: "created",
+            subtaskUpdated: "updated",
+            subtaskToggled: "toggled",
+          };
           this.dispatch(
             updateCardSubtaskFromWS({
               cardId: event.card_id,
               subtask: event.subtask,
+              eventType: subtaskEventMap[eventType],
             })
           );
         }
@@ -175,6 +211,7 @@ export class WebSocketManager {
             updateCardCommentFromWS({
               cardId: event.card_id,
               comment: event.comment,
+              eventType: eventType === "commentCreated" ? "created" : "updated",
             })
           );
         }
@@ -209,7 +246,7 @@ export class WebSocketManager {
         break;
 
       case "autoDetectStatus":
-        if (event.board_id) {
+        if (event.board_id && event.status) {
           this.dispatch(
             setAutoDetectStatus({
               boardId: event.board_id,
@@ -220,12 +257,18 @@ export class WebSocketManager {
         }
         break;
 
+      case "notificationCreated":
+        if (event.notification) {
+          this.dispatch(addNotificationFromWS(event.notification));
+        }
+        break;
+
       case "connected":
-        console.log("[WS] Server confirmed connection");
+        wsLog("[WS] Server confirmed connection");
         break;
 
       default:
-        console.log("[WS] Unknown event:", eventType);
+        wsLog("[WS] Unknown event:", eventType);
     }
   }
 
@@ -236,7 +279,7 @@ export class WebSocketManager {
     );
     this.reconnectAttempts++;
 
-    console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    wsLog(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
     this.reconnectTimer = setTimeout(() => {
       this.connect();

@@ -178,6 +178,20 @@ export interface BoardSettings {
   updated_at: string;
 }
 
+export type NotificationType = "card_stage_changed" | "ai_completed" | "ai_question_pending" | "review_requested" | "ai_error";
+
+export interface Notification {
+  id: string;
+  user_id: string | null;
+  notification_type: NotificationType;
+  title: string;
+  message: string;
+  card_id: string | null;
+  board_id: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
 export interface UpdateBoardSettingsRequest {
   ai_concurrency?: number | string;
   codebase_path?: string;

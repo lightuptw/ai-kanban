@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::api::AppState;
 use crate::api::handlers::sse::WsEvent;
-use crate::domain::{AiQuestion, KanbanError};
+use crate::domain::{AiQuestion, KanbanError, NotificationType};
+use crate::services::NotificationService;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateQuestionRequest {
@@ -117,6 +118,18 @@ pub async fn create_question(
     let _ = state
         .sse_tx
         .send(serde_json::to_string(&event).unwrap_or_default());
+
+    let _ = NotificationService::create_notification(
+        pool,
+        &state.sse_tx,
+        None,
+        NotificationType::AiQuestionPending,
+        &format!("AI needs input: {}", req.question),
+        "AI is waiting for your answer on card",
+        Some(&question_row.card_id),
+        None,
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(question_row)))
 }

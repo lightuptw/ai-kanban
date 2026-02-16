@@ -108,9 +108,17 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         get(handlers::files::download_file).delete(handlers::files::delete_file),
     );
 
+    let notification_routes = Router::new()
+        .route("/", get(handlers::notifications::list_notifications))
+        .route("/read-all", post(handlers::notifications::mark_all_read))
+        .route("/{id}/read", patch(handlers::notifications::mark_read))
+        .route(
+            "/{id}",
+            axum::routing::delete(handlers::notifications::delete_notification),
+        );
+
     let public_routes = Router::new()
         .route("/health", get(handlers::health_check))
-        .route("/health/live", get(handlers::liveness))
         .route(
             "/api/cards/{id}/questions",
             get(handlers::questions::get_questions).post(handlers::questions::create_question),
@@ -135,6 +143,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         .nest("/api/subtasks", subtask_routes)
         .nest("/api/comments", comment_routes)
         .nest("/api/files", file_routes)
+        .nest("/api/notifications", notification_routes)
         .route(
             "/api/settings/{key}",
             get(handlers::settings::get_setting).put(handlers::settings::set_setting),

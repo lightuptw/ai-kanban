@@ -6,8 +6,8 @@ The system consists of three processes:
 
 | Process | Port | Role |
 |---------|------|------|
-| **Backend** (Rust/Axum) | :3000 | REST API, WebSocket, SSE events, static file serving, MCP endpoint |
-| **Frontend** (Vite/React) | :5173 | SPA dev server (in production, served by backend from `frontend/dist`) |
+| **Backend** (Rust/Axum) | :21547 | REST API, WebSocket, SSE events, static file serving, MCP endpoint |
+| **Frontend** (Vite/React) | :21548 | SPA dev server (in production, served by backend from `frontend/dist`) |
 | **opencode CLI** | :4096 | AI agent runtime with session management and MCP tool support |
 
 ## System Diagram
@@ -15,8 +15,8 @@ The system consists of three processes:
 ```
 ┌─────────────────┐      HTTP/REST        ┌───────────────────────┐
 │    Frontend      │ ────────────────────> │   Backend (Axum)      │
-│    React SPA     │ <──────────────────── │   Port :3000          │
-│    Port :5173    │    SSE /api/events    │                       │
+│    React SPA     │ <──────────────────── │   Port :21547         │
+│    Port :21548   │    SSE /api/events    │                       │
 │                  │ <──── WebSocket ───── │   - REST API          │    SQLite
 │  - KanbanBoard   │    /ws/logs/{id}      │   - SSE broadcast     │ ──────────> kanban.db
 │  - CardDialog    │                       │   - WebSocket logs    │
@@ -41,9 +41,9 @@ The system consists of three processes:
                                                       │ stdio
                                                       v
                                           ┌───────────────────────┐
-                                          │   kanban-mcp          │    HTTP
-                                          │   (stdio binary)      │ ──────────> Backend :3000
-                                          │   15 MCP tools        │
+│   kanban-mcp          │    HTTP
+│   (stdio binary)      │ ──────────> Backend :21547
+│   12 MCP tools        │
                                           └───────────────────────┘
 ```
 
@@ -94,7 +94,7 @@ Layered structure under `backend/src/`:
 
 ### MCP Layer (`src/mcp/`)
 
-Stateless HTTP proxy. `KanbanMcp` holds a `reqwest::Client` and `base_url`. All 15 tools forward to the REST API. No direct database access.
+Stateless HTTP proxy. `KanbanMcp` holds a `reqwest::Client` and `base_url`. All 12 tools forward to the REST API. No direct database access.
 
 ### Binaries
 
@@ -168,7 +168,7 @@ idle ──> queued ──> dispatched ──> working ──> completed
 ## SSE Event Flow
 
 ```
-opencode (:4096)                   Backend (:3000)                    Frontend
+opencode (:4096)                   Backend (:21547)                   Frontend
 ─────────────────                  ───────────────                    ────────
   SSE /event ──────────────────>  SseRelayService
                                     │
@@ -186,7 +186,7 @@ opencode (:4096)                   Backend (:3000)                    Frontend
 
 ## Database Schema
 
-9 migrations in `backend/migrations/`:
+17 migrations in `backend/migrations/`:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|

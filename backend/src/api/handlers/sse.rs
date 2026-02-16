@@ -90,4 +90,7 @@ pub enum WsEvent {
         elapsed_seconds: Option<u64>,
         message: Option<String>,
     },
+    NotificationCreated {
+        notification: serde_json::Value,
+    },
 }

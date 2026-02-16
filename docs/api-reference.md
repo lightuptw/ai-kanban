@@ -1,6 +1,6 @@
 # API Reference
 
-Base URL: `http://localhost:3000`
+Base URL: `http://localhost:21547`
 
 All request/response bodies are JSON. Errors return `{"error": "message", "status": <code>}`.
 
@@ -9,7 +9,6 @@ All request/response bodies are JSON. Errors return `{"error": "message", "statu
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
-| GET | `/health/live` | Liveness probe |
 
 ## Board View
 
@@ -175,7 +174,7 @@ Sends JSON messages with AgentLog objects as AI processes the card. Replays exis
 
 **`POST /mcp`** — Streamable HTTP MCP endpoint.
 
-Alternative to the stdio binary. Same 15 tools, same HTTP proxy behavior. Used for direct MCP tool calls without opencode.
+Alternative to the stdio binary. Same 12 tools, same HTTP proxy behavior. Used for direct MCP tool calls without opencode.
 
 ## Agent Log Object
 

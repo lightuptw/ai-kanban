@@ -34,6 +34,9 @@ import {
 } from "@mui/icons-material";
 import type { BoardSettings, UpdateBoardSettingsRequest } from "../../types/kanban";
 import { api } from "../../services/api";
+import { useDispatch } from "react-redux";
+import { updateBoard } from "../../store/slices/kanbanSlice";
+import type { AppDispatch } from "../../redux/store";
 
 interface BoardSettingsDialogProps {
   open: boolean;
@@ -121,11 +124,37 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
   boardName,
   onClose,
 }) => {
+  const dispatch = useDispatch<AppDispatch>();
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [settings, setSettings] = useState<EditableBoardSettings>(EMPTY_SETTINGS);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
+
+  const [editingName, setEditingName] = useState(false);
+  const [localBoardName, setLocalBoardName] = useState(boardName);
+
+  useEffect(() => {
+    setLocalBoardName(boardName);
+  }, [boardName]);
+
+  const handleBoardNameSave = async () => {
+    const trimmed = localBoardName.trim();
+    if (!trimmed || trimmed === boardName) {
+      setLocalBoardName(boardName);
+      setEditingName(false);
+      return;
+    }
+    try {
+      await dispatch(updateBoard({ id: boardId, data: { name: trimmed } })).unwrap();
+      setEditingName(false);
+      setSnackbarMessage("Board name updated.");
+    } catch {
+      setSnackbarMessage("Failed to update board name.");
+      setLocalBoardName(boardName);
+      setEditingName(false);
+    }
+  };
 
   const [autoDetectStatus, setLocalAutoDetectStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
   const [autoDetectSessionId, setAutoDetectSessionId] = useState<string | null>(null);
@@ -275,8 +304,8 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
         const data = await api.getAutoDetectLogs(boardId, autoDetectSessionId);
         if (data?.messages) {
           const logs = data.messages
-            .filter((m: any) => m.role === "assistant")
-            .map((m: any) =>
+            .filter((m: { role: string; content: string | unknown }) => m.role === "assistant")
+            .map((m: { role: string; content: string | unknown }) =>
               typeof m.content === "string" ? m.content : JSON.stringify(m.content)
             );
           setAutoDetectLogs(logs);
@@ -398,7 +427,33 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
         <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography variant="h6">{boardName} Settings</Typography>
+              {editingName ? (
+                <TextField
+                  value={localBoardName}
+                  onChange={(e) => setLocalBoardName(e.target.value)}
+                  onBlur={handleBoardNameSave}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleBoardNameSave();
+                    if (e.key === "Escape") {
+                      setLocalBoardName(boardName);
+                      setEditingName(false);
+                    }
+                  }}
+                  variant="standard"
+                  autoFocus
+                  inputProps={{ style: { fontSize: "1.25rem", fontWeight: 500 } }}
+                  sx={{ minWidth: 200 }}
+                />
+              ) : (
+                <Typography
+                  variant="h6"
+                  onClick={() => setEditingName(true)}
+                  sx={{ cursor: "pointer", "&:hover": { textDecoration: "underline dotted", textUnderlineOffset: 4 } }}
+                  title="Click to rename board"
+                >
+                  {localBoardName} Settings
+                </Typography>
+              )}
               <Tooltip
                 title="Everything you fill in here becomes shared context for AI when it works on any card in this board. Think of it as giving AI a project briefing - it reads this before starting any task. Your AI provider (Anthropic, OpenAI, Gemini) automatically caches this context, so it only costs full price once, then up to 90% cheaper on repeat use."
                 arrow

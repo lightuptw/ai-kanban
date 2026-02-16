@@ -1,6 +1,4 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  `${window.location.protocol}//${window.location.hostname}:21547`;
+import { API_BASE_URL } from "../constants";
 
 const TOKEN_KEY = "token";
 const REFRESH_TOKEN_KEY = "refresh_token";
@@ -115,6 +113,7 @@ export async function refresh() {
 }
 
 export function logout() {
+  window.dispatchEvent(new Event("auth:logout"));
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);

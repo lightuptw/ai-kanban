@@ -118,18 +118,44 @@ impl QueueProcessor {
                     AiDispatchService::new(self.http_client.clone(), self.opencode_url.clone());
 
                 match dispatcher.dispatch_card(&dispatch_card, &subtasks, &self.db).await {
-                    Ok(_) => {
+                    Ok(session_id) if !session_id.is_empty() => {
+                        if let Err(e) = sqlx::query(
+                            "UPDATE cards SET stage = ?, updated_at = ? WHERE id = ?",
+                        )
+                        .bind("in_progress")
+                        .bind(chrono::Utc::now().to_rfc3339())
+                        .bind(&dispatch_card.id)
+                        .execute(&self.db)
+                        .await
+                        {
+                            tracing::warn!(
+                                card_id = dispatch_card.id,
+                                error = %e,
+                                "Failed to move card to in_progress after dispatch"
+                            );
+                        }
+
+                        let move_event = WsEvent::CardMoved {
+                            card_id: dispatch_card.id.clone(),
+                            from_stage: "todo".to_string(),
+                            to_stage: "in_progress".to_string(),
+                        };
+                        if let Ok(payload) = serde_json::to_string(&move_event) {
+                            let _ = self.sse_tx.send(payload);
+                        }
+
                         let event = WsEvent::AiStatusChanged {
                             card_id: dispatch_card.id.clone(),
                             status: "dispatched".to_string(),
                             progress: json!({}),
-                            stage: dispatch_card.stage.clone(),
-                            ai_session_id: dispatch_card.ai_session_id.clone(),
+                            stage: "in_progress".to_string(),
+                            ai_session_id: Some(session_id),
                         };
                         if let Ok(payload) = serde_json::to_string(&event) {
                             let _ = self.sse_tx.send(payload);
                         }
                     }
+                    Ok(_) => {}
                     Err(e) => {
                         tracing::warn!(card_id = dispatch_card.id, "Queue dispatch failed: {}", e);
                     }

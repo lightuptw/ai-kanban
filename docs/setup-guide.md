@@ -75,8 +75,8 @@ opencode serve --port 4096
 
 ### Verify
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:3000/health
+- Frontend: http://localhost:21548
+- Backend API: http://localhost:21547/health
 - OpenCode: http://localhost:4096
 
 ## Running in Production
@@ -100,7 +100,7 @@ cd backend && cargo build --release && cd ..
 ./backend/target/release/kanban-backend
 ```
 
-The backend serves both the API and the built frontend at `http://localhost:3000`.
+The backend serves both the API and the built frontend at `http://localhost:21547`.
 
 ## MCP Binary Setup
 
@@ -125,7 +125,7 @@ Add to `~/.config/opencode/opencode.json`:
       "command": ["/absolute/path/to/kanban-mcp"],
       "enabled": true,
       "environment": {
-        "KANBAN_API_URL": "http://127.0.0.1:3000"
+        "KANBAN_API_URL": "http://127.0.0.1:21547"
       }
     }
   }
@@ -138,20 +138,20 @@ Restart opencode after changing config. The backend must be running for MCP tool
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3000` | Backend HTTP server port |
+| `PORT` | `21547` | Backend HTTP server port |
 | `DATABASE_URL` | `sqlite:kanban.db` | SQLite database file path |
 | `OPENCODE_URL` | `http://localhost:4096` | OpenCode API endpoint for AI dispatch |
 | `FRONTEND_DIR` | `../frontend/dist` | Path to built frontend (production mode) |
-| `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origins (comma-separated for multiple) |
+| `CORS_ORIGIN` | `http://localhost:21548` | Allowed CORS origins (comma-separated for multiple) |
 | `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
-| `KANBAN_API_URL` | `http://127.0.0.1:3000` | MCP binary target (set in opencode config, not .env) |
+| `KANBAN_API_URL` | `http://127.0.0.1:21547` | MCP binary target (set in opencode config, not .env) |
 
 ### Multi-origin CORS
 
 For development across localhost and 127.0.0.1:
 
 ```
-CORS_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
+CORS_ORIGIN=http://localhost:21548,http://127.0.0.1:21548
 ```
 
 ## Database
@@ -162,7 +162,7 @@ Default: `backend/kanban.db`
 
 ### Migrations
 
-9 migration files in `backend/migrations/`, run in order:
+17 migration files in `backend/migrations/`, run in order:
 
 | Migration | Tables/Changes |
 |-----------|---------------|
@@ -175,6 +175,14 @@ Default: `backend/kanban.db`
 | `20260220_001_agent_logs.sql` | agent_logs table |
 | `20260221_001_add_ai_agent.sql` | cards.ai_agent |
 | `20260222_001_add_card_versions.sql` | card_versions table |
+| `20260223_001_board_settings.sql` | board_settings table |
+| `20260224_001_board_settings_github_repo.sql` | board_settings.github_repo |
+| `20260225_001_auth.sql` | users, api_keys tables (JWT + Argon2 auth) |
+| `20260226_001_refresh_tokens.sql` | refresh_tokens table |
+| `20260227_001_ai_questions.sql` | ai_questions table (AI-to-user questions) |
+| `20260228_001_board_settings_concurrency.sql` | board_settings concurrency fields |
+| `20260301_001_card_worktree.sql` | cards.worktree_path (git worktree support) |
+| `20260302_001_auto_detect_status.sql` | cards.auto_detect_status |
 
 ### WAL Mode
 

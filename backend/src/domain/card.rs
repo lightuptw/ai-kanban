@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Card {
@@ -20,6 +21,41 @@ pub struct Card {
     pub ai_agent: Option<String>,
     pub branch_name: String,
     pub worktree_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationType {
+    CardStageChanged,
+    AiCompleted,
+    AiQuestionPending,
+    ReviewRequested,
+    AiError,
+}
+
+impl fmt::Display for NotificationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CardStageChanged => write!(f, "card_stage_changed"),
+            Self::AiCompleted => write!(f, "ai_completed"),
+            Self::AiQuestionPending => write!(f, "ai_question_pending"),
+            Self::ReviewRequested => write!(f, "review_requested"),
+            Self::AiError => write!(f, "ai_error"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Notification {
+    pub id: String,
+    pub user_id: Option<String>,
+    pub notification_type: String,
+    pub title: String,
+    pub message: String,
+    pub card_id: Option<String>,
+    pub board_id: Option<String>,
+    pub is_read: bool,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

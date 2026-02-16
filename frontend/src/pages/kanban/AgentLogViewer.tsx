@@ -4,6 +4,7 @@ import { keyframes } from "@emotion/react";
 import { Box, Typography, Chip, CircularProgress } from "@mui/material";
 import { api } from "../../services/api";
 import type { AgentLog } from "../../types/kanban";
+import { API_BASE_URL } from "../../constants";
 
 interface AgentLogViewerProps {
   cardId: string;
@@ -227,12 +228,9 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
 
   useEffect(() => {
     function connectWs() {
-      const wsProtocol =
-        window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsHost = import.meta.env.VITE_API_URL
-        ? new URL(import.meta.env.VITE_API_URL as string).host
-        : `${window.location.hostname}:21547`;
-      const wsUrl = `${wsProtocol}//${wsHost}/ws/logs/${cardId}`;
+      const apiUrl = new URL(API_BASE_URL);
+      const wsProtocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/logs/${cardId}`;
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;

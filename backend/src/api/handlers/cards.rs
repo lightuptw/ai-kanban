@@ -10,9 +10,9 @@ use sqlx::{Row, SqlitePool};
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
 use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
-use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, Stage};
+use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, NotificationType, Stage};
 use crate::services::git_worktree::{DiffResult, MergeResult};
-use crate::services::{AiDispatchService, CardService, GitWorktreeService};
+use crate::services::{AiDispatchService, CardService, GitWorktreeService, NotificationService};
 
 #[derive(Debug, Deserialize)]
 pub struct BoardQuery {
@@ -301,7 +301,7 @@ pub async fn move_card(
         let updated_card = CardService::get_card_by_id(pool, &id).await?;
 
         let event = WsEvent::AiStatusChanged {
-            card_id: id,
+            card_id: id.clone(),
             status: updated_card.ai_status.clone(),
             progress: updated_card.ai_progress.clone(),
             stage: updated_card.stage.clone(),
@@ -311,7 +311,73 @@ pub async fn move_card(
             let _ = state.sse_tx.send(payload);
         }
 
+        let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_default();
+        let board_id = if board_id.is_empty() {
+            None
+        } else {
+            Some(board_id.as_str())
+        };
+
+        let _ = NotificationService::create_notification(
+            pool,
+            &state.sse_tx,
+            None,
+            NotificationType::CardStageChanged,
+            &format!("Card moved: {}", updated_card.title),
+            &format!(
+                "Card '{}' moved from {} to {}",
+                updated_card.title, previous_card.stage, updated_card.stage
+            ),
+            Some(&updated_card.id),
+            board_id,
+        )
+        .await;
+
         return Ok(Json(updated_card));
+    }
+
+    let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or_default();
+    let board_id = if board_id.is_empty() {
+        None
+    } else {
+        Some(board_id.as_str())
+    };
+
+    let _ = NotificationService::create_notification(
+        pool,
+        &state.sse_tx,
+        None,
+        NotificationType::CardStageChanged,
+        &format!("Card moved: {}", card.title),
+        &format!(
+            "Card '{}' moved from {} to {}",
+            card.title, previous_card.stage, card.stage
+        ),
+        Some(&card.id),
+        board_id,
+    )
+    .await;
+
+    if target_stage == Stage::Review {
+        let _ = NotificationService::create_notification(
+            pool,
+            &state.sse_tx,
+            None,
+            NotificationType::ReviewRequested,
+            &format!("Review requested: {}", card.title),
+            &format!("Card '{}' is ready for review", card.title),
+            Some(&card.id),
+            board_id,
+        )
+        .await;
     }
 
     Ok(Json(card))
@@ -417,6 +483,15 @@ pub async fn generate_plan(
         .bind(&card_id)
         .execute(pool)
         .await?;
+
+    let plan_event = WsEvent::AiStatusChanged {
+        card_id: card_id.clone(),
+        status: "planning".to_string(),
+        progress: json!({}),
+        stage: card.stage.clone(),
+        ai_session_id: Some(session_id.clone()),
+    };
+    let _ = state.sse_tx.send(serde_json::to_string(&plan_event).unwrap_or_default());
 
     let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
         .bind(&card.id)
@@ -535,6 +610,8 @@ CRITICAL: The card_id for ALL tool calls is: {}",
     );
     let db_clone = pool.clone();
     let card_id_clone = card_id.clone();
+    let sse_tx_clone = state.sse_tx.clone();
+    let card_stage = card.stage.clone();
 
     tokio::spawn(async move {
         let result = http_client
@@ -542,6 +619,17 @@ CRITICAL: The card_id for ALL tool calls is: {}",
             .json(&json!({"parts": [{"type": "text", "text": prompt}]}))
             .send()
             .await;
+
+        let broadcast_failed = |card_id: &str, stage: &str| {
+            let event = WsEvent::AiStatusChanged {
+                card_id: card_id.to_string(),
+                status: "failed".to_string(),
+                progress: json!({}),
+                stage: stage.to_string(),
+                ai_session_id: None,
+            };
+            let _ = sse_tx_clone.send(serde_json::to_string(&event).unwrap_or_default());
+        };
 
         match result {
             Ok(response) if response.status().is_success() => {
@@ -562,6 +650,7 @@ CRITICAL: The card_id for ALL tool calls is: {}",
                 {
                     tracing::warn!(error = %e, card_id = card_id_clone.as_str(), "Failed to update card status after plan dispatch failure");
                 }
+                broadcast_failed(&card_id_clone, &card_stage);
             }
             Err(err) => {
                 tracing::warn!(card_id = card_id_clone.as_str(), error = %err, "Failed to send plan generation message");
@@ -574,6 +663,7 @@ CRITICAL: The card_id for ALL tool calls is: {}",
                 {
                     tracing::warn!(error = %e, card_id = card_id_clone.as_str(), "Failed to update card status after plan message error");
                 }
+                broadcast_failed(&card_id_clone, &card_stage);
             }
         }
     });

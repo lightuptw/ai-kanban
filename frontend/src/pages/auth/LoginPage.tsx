@@ -26,6 +26,7 @@ const LoginPage: React.FC = () => {
 
     try {
       await authService.login(username.trim(), password);
+      window.dispatchEvent(new Event("auth:login"));
       navigate("/");
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : "Login failed";

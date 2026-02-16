@@ -21,3 +21,4 @@ backend/.sisyphus/
 # OS files
 .DS_Store
 Thumbs.db
+.lightup-workspaces/

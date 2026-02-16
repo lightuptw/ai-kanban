@@ -20,7 +20,9 @@ import type {
   UpdateBoardSettingsRequest,
   DiffResult,
   MergeResult,
+  Notification,
 } from "../types/kanban";
+import { API_BASE_URL } from "../constants";
 
 interface AiQuestion {
   id: string;
@@ -34,10 +36,6 @@ interface AiQuestion {
   answered_at: string | null;
   created_at: string;
 }
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  `${window.location.protocol}//${window.location.hostname}:21547`;
 
 function buildHeaders(options?: RequestInit, token?: string | null): Headers {
   const headers = new Headers(options?.headers);
@@ -257,7 +255,7 @@ export const api = {
     ),
 
   getAutoDetectLogs: (boardId: string, sessionId: string) =>
-    fetchAPI<any>(`/api/boards/${boardId}/settings/auto-detect-logs?session_id=${sessionId}`),
+    fetchAPI<{ messages?: { role: string; content: string | unknown }[] }>(`/api/boards/${boardId}/settings/auto-detect-logs?session_id=${sessionId}`),
 
   pickDirectory: () =>
     fetchAPI<{ path: string | null; paths: string[] }>("/api/pick-directory", { method: "POST" }),
@@ -279,4 +277,24 @@ export const api = {
         body: JSON.stringify({ value }),
       }
     ),
+
+  getNotifications: (unreadOnly?: boolean) =>
+    fetchAPI<Notification[]>(
+      `/api/notifications${unreadOnly ? "?unread_only=true" : ""}`
+    ),
+
+  markNotificationRead: (id: string) =>
+    fetchAPI<Notification>(`/api/notifications/${id}/read`, {
+      method: "PATCH",
+    }),
+
+  markAllNotificationsRead: () =>
+    fetchAPI<void>("/api/notifications/read-all", {
+      method: "POST",
+    }),
+
+  deleteNotification: (id: string) =>
+    fetchAPI<void>(`/api/notifications/${id}`, {
+      method: "DELETE",
+    }),
 };

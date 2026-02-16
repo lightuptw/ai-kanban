@@ -26,6 +26,143 @@ impl AiDispatchService {
         subtasks: &[Subtask],
         db: &SqlitePool,
     ) -> Result<String, KanbanError> {
+        if let Some(existing_session) = card.ai_session_id.as_deref().filter(|s| !s.is_empty()) {
+            if self.is_session_alive(existing_session).await {
+                tracing::info!(
+                    card_id = card.id,
+                    session_id = existing_session,
+                    "Reusing planning session for work dispatch"
+                );
+                return self
+                    .dispatch_with_existing_session(card, subtasks, existing_session, db)
+                    .await;
+            }
+            tracing::info!(
+                card_id = card.id,
+                session_id = existing_session,
+                "Planning session no longer available, creating fresh session"
+            );
+        }
+
+        self.dispatch_with_new_session(card, subtasks, db).await
+    }
+
+    async fn is_session_alive(&self, session_id: &str) -> bool {
+        let url = format!("{}/session/{}", self.opencode_url, session_id);
+        match self
+            .http_client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => true,
+            _ => false,
+        }
+    }
+
+    async fn dispatch_with_existing_session(
+        &self,
+        card: &Card,
+        subtasks: &[Subtask],
+        session_id: &str,
+        db: &SqlitePool,
+    ) -> Result<String, KanbanError> {
+        let plan_content = PlanGenerator::generate_plan(card, subtasks)
+            .map_err(KanbanError::OpenCodeError)?;
+        let plan_path =
+            PlanGenerator::write_plan_file(&card.working_directory, &card.title, &plan_content)
+                .map_err(KanbanError::OpenCodeError)?;
+
+        sqlx::query(
+            "UPDATE cards SET ai_status = ?, plan_path = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind("dispatched")
+        .bind(&plan_path)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(&card.id)
+        .execute(db)
+        .await?;
+
+        let agent_instruction = if let Some(agent) = &card.ai_agent {
+            format!("You are acting as the {} agent. ", agent)
+        } else {
+            String::new()
+        };
+        let prompt = format!(
+            "{}The planning phase is complete. A work plan has been generated at {}. Read it carefully — it includes your earlier plan plus any modifications the human reviewer made. Then execute /start-work to begin. Work through ALL TODOs systematically.",
+            agent_instruction, plan_path
+        );
+
+        let http_client = self.http_client.clone();
+        let message_url = format!(
+            "{}/session/{}/message",
+            self.opencode_url, session_id
+        );
+        let card_id = card.id.clone();
+        let db_clone = db.clone();
+        let session_id_owned = session_id.to_string();
+
+        tokio::spawn(async move {
+            tracing::info!(
+                card_id = card_id.as_str(),
+                session_id = session_id_owned.as_str(),
+                "Sending continuation work plan to existing session"
+            );
+
+            let result = http_client
+                .post(&message_url)
+                .json(&json!({"parts": [{"type": "text", "text": prompt}]}))
+                .send()
+                .await;
+
+            match result {
+                Ok(response) if response.status().is_success() => {
+                    tracing::info!(
+                        card_id = card_id.as_str(),
+                        "Continuation message sent successfully to existing session"
+                    );
+                }
+                Ok(response) => {
+                    tracing::warn!(
+                        card_id = card_id.as_str(),
+                        status = %response.status(),
+                        "Continuation message returned non-success"
+                    );
+                    if let Err(e) = Self::mark_failed(&db_clone, &card_id).await {
+                        tracing::warn!(
+                            error = %e,
+                            card_id = card_id.as_str(),
+                            "Failed to mark card as failed after continuation non-success"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        card_id = card_id.as_str(),
+                        error = %err,
+                        "Failed to send continuation message"
+                    );
+                    if let Err(e) = Self::mark_failed(&db_clone, &card_id).await {
+                        tracing::warn!(
+                            error = %e,
+                            card_id = card_id.as_str(),
+                            "Failed to mark card as failed after continuation send error"
+                        );
+                    }
+                }
+            }
+        });
+
+        Ok(session_id.to_string())
+    }
+
+    async fn dispatch_with_new_session(
+        &self,
+        card: &Card,
+        subtasks: &[Subtask],
+        db: &SqlitePool,
+    ) -> Result<String, KanbanError> {
         if !Path::new(&card.working_directory).exists() {
             tracing::warn!(
                 card_id = card.id,

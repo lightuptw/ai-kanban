@@ -42,13 +42,18 @@ impl IntoKanbanApiUrl for sqlx::SqlitePool {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct CreateBoardInput {
-    name: String,
+struct BoardInput {
+    /// Action: "list" (default), "create", or "delete"
+    #[serde(default = "default_list")]
+    action: String,
+    /// Board name (required for "create")
+    name: Option<String>,
+    /// Board ID (required for "delete")
+    board_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct DeleteBoardInput {
-    board_id: String,
+fn default_list() -> String {
+    "list".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -110,36 +115,31 @@ struct DeleteSubtaskInput {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct GetCommentsInput {
+struct CommentInput {
     card_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct AddCommentInput {
-    card_id: String,
-    content: String,
+    /// Action to perform: "add" (default), "list", "update", or "delete"
+    #[serde(default = "default_add")]
+    action: String,
+    /// Comment content (required for "add" and "update")
+    content: Option<String>,
+    /// Comment author (for "add", defaults to "AI Agent")
     author: Option<String>,
+    /// Comment ID (required for "update" and "delete")
+    comment_id: Option<String>,
+}
+
+fn default_add() -> String {
+    "add".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct UpdateCommentInput {
-    comment_id: String,
-    content: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct DeleteCommentInput {
-    comment_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct GetBoardSettingsInput {
+struct BoardSettingsInput {
+    /// Board ID (required)
     board_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct UpdateBoardSettingsInput {
-    board_id: String,
+    /// Action: "get" (default) or "update"
+    #[serde(default = "default_get")]
+    action: String,
+    /// Fields below are only used for "update" action:
     codebase_path: Option<String>,
     github_repo: Option<String>,
     context_markdown: Option<String>,
@@ -152,6 +152,10 @@ struct UpdateBoardSettingsInput {
     testing_requirements: Option<String>,
     api_conventions: Option<String>,
     infrastructure: Option<String>,
+}
+
+fn default_get() -> String {
+    "get".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -328,36 +332,36 @@ impl KanbanMcp {
     }
 
     #[tool(
-        description = "List all boards ordered by position. Use this to discover available boards before creating or fetching board-specific cards. Returns a JSON array of board objects with id, name, position, created_at, and updated_at."
+        description = "Manage boards. Actions: \"list\" (default, no params needed), \"create\" (requires name), \"delete\" (requires board_id). Returns board JSON."
     )]
-    async fn kanban_list_boards(&self) -> Result<CallToolResult, McpError> {
-        let data = self.get("/api/boards").await?;
-        Self::json_result(&data)
-    }
-
-    #[tool(
-        description = "Create a new board. Use this when you need a separate workspace for a project stream. Returns the created board as JSON with id, name, position, created_at, and updated_at."
-    )]
-    async fn kanban_create_board(
+    async fn kanban_board(
         &self,
-        Parameters(input): Parameters<CreateBoardInput>,
+        Parameters(input): Parameters<BoardInput>,
     ) -> Result<CallToolResult, McpError> {
-        let body = json!({"name": input.name});
-        let data = self.post("/api/boards", &body).await?;
-        Self::json_result(&data)
-    }
-
-    #[tool(
-        description = "Delete a board by id. Use this when cleaning up unused boards. Returns a JSON object confirming deletion with the deleted board id."
-    )]
-    async fn kanban_delete_board(
-        &self,
-        Parameters(input): Parameters<DeleteBoardInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let data = self
-            .delete(&format!("/api/boards/{}", input.board_id))
-            .await?;
-        Self::json_result(&data)
+        match input.action.as_str() {
+            "list" => {
+                let data = self.get("/api/boards").await?;
+                Self::json_result(&data)
+            }
+            "create" => {
+                let name = input.name.ok_or_else(|| {
+                    McpError::internal_error("name is required for action 'create'", None)
+                })?;
+                let data = self.post("/api/boards", &json!({"name": name})).await?;
+                Self::json_result(&data)
+            }
+            "delete" => {
+                let board_id = input.board_id.ok_or_else(|| {
+                    McpError::internal_error("board_id is required for action 'delete'", None)
+                })?;
+                let data = self.delete(&format!("/api/boards/{}", board_id)).await?;
+                Self::json_result(&data)
+            }
+            other => Err(McpError::internal_error(
+                format!("Unknown action '{}'. Valid: list, create, delete", other),
+                None,
+            )),
+        }
     }
 
     #[tool(
@@ -522,126 +526,135 @@ impl KanbanMcp {
     }
 
     #[tool(
-        description = "List comments for a card in chronological order. Use this to review discussion history before making updates. Returns a JSON array of comments with id, card_id, author, content, and created_at."
+        description = "Manage comments on a card. Supports 4 actions via the 'action' parameter: \"list\" (list all comments, only card_id required), \"add\" (default, requires content, optional author defaults to 'AI Agent'), \"update\" (requires comment_id and content), \"delete\" (requires comment_id). Returns the comment(s) as JSON."
     )]
-    async fn kanban_get_comments(
+    async fn kanban_comment(
         &self,
-        Parameters(input): Parameters<GetCommentsInput>,
+        Parameters(input): Parameters<CommentInput>,
     ) -> Result<CallToolResult, McpError> {
-        let data = self
-            .get(&format!("/api/cards/{}/comments", input.card_id))
-            .await?;
-        Self::json_result(&data)
+        match input.action.as_str() {
+            "list" => {
+                let data = self
+                    .get(&format!("/api/cards/{}/comments", input.card_id))
+                    .await?;
+                Self::json_result(&data)
+            }
+            "add" => {
+                let content = input.content.ok_or_else(|| {
+                    McpError::internal_error(
+                        "content is required for action 'add'".to_string(),
+                        None,
+                    )
+                })?;
+                let body = json!({
+                    "author": input.author.unwrap_or_else(|| "AI Agent".to_string()),
+                    "content": content
+                });
+                let data = self
+                    .post(&format!("/api/cards/{}/comments", input.card_id), &body)
+                    .await?;
+                Self::json_result(&data)
+            }
+            "update" => {
+                let comment_id = input.comment_id.ok_or_else(|| {
+                    McpError::internal_error(
+                        "comment_id is required for action 'update'".to_string(),
+                        None,
+                    )
+                })?;
+                let content = input.content.ok_or_else(|| {
+                    McpError::internal_error(
+                        "content is required for action 'update'".to_string(),
+                        None,
+                    )
+                })?;
+                let body = json!({"content": content});
+                let data = self
+                    .patch(&format!("/api/comments/{}", comment_id), &body)
+                    .await?;
+                Self::json_result(&data)
+            }
+            "delete" => {
+                let comment_id = input.comment_id.ok_or_else(|| {
+                    McpError::internal_error(
+                        "comment_id is required for action 'delete'".to_string(),
+                        None,
+                    )
+                })?;
+                let data = self
+                    .delete(&format!("/api/comments/{}", comment_id))
+                    .await?;
+                Self::json_result(&data)
+            }
+            other => Err(McpError::internal_error(
+                format!(
+                    "Unknown action '{}'. Valid actions: list, add, update, delete",
+                    other
+                ),
+                None,
+            )),
+        }
     }
 
     #[tool(
-        description = "Add a comment to a card. Use this to capture rationale, status, or implementation notes. Returns the created comment as JSON. Default author is AI Agent."
+        description = "Manage board-level settings. Actions: \"get\" (default, returns codebase path, AI context, tech stack, conventions, environment details), \"update\" (set any settings fields). Requires board_id."
     )]
-    async fn kanban_add_comment(
+    async fn kanban_board_settings(
         &self,
-        Parameters(input): Parameters<AddCommentInput>,
+        Parameters(input): Parameters<BoardSettingsInput>,
     ) -> Result<CallToolResult, McpError> {
-        let body = json!({
-            "author": input.author.unwrap_or_else(|| "AI Agent".to_string()),
-            "content": input.content
-        });
-        let data = self
-            .post(&format!("/api/cards/{}/comments", input.card_id), &body)
-            .await?;
-        Self::json_result(&data)
-    }
-
-    #[tool(
-        description = "Update comment content by id. Use this to revise existing notes while keeping history ordering. Returns the updated comment as JSON."
-    )]
-    async fn kanban_update_comment(
-        &self,
-        Parameters(input): Parameters<UpdateCommentInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let body = json!({"content": input.content});
-        let data = self
-            .patch(&format!("/api/comments/{}", input.comment_id), &body)
-            .await?;
-        Self::json_result(&data)
-    }
-
-    #[tool(
-        description = "Delete a comment by id. Use this to remove outdated or accidental notes. Returns a JSON object confirming deletion with the deleted comment id."
-    )]
-    async fn kanban_delete_comment(
-        &self,
-        Parameters(input): Parameters<DeleteCommentInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let data = self
-            .delete(&format!("/api/comments/{}", input.comment_id))
-            .await?;
-        Self::json_result(&data)
-    }
-
-    #[tool(
-        description = "Get board-level settings including codebase path, AI context, tech stack, conventions, and environment details. Use this to understand the project context before working on cards in this board."
-    )]
-    async fn kanban_get_board_settings(
-        &self,
-        Parameters(input): Parameters<GetBoardSettingsInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let data = self
-            .get(&format!("/api/boards/{}/settings", input.board_id))
-            .await?;
-        Self::json_result(&data)
-    }
-
-    #[tool(
-        description = "Update board-level settings. Use this to set codebase path, AI context, tech stack, conventions, environments, and infrastructure details that apply to all cards in the board."
-    )]
-    async fn kanban_update_board_settings(
-        &self,
-        Parameters(input): Parameters<UpdateBoardSettingsInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let mut body = serde_json::Map::new();
-        if let Some(v) = input.codebase_path {
-            body.insert("codebase_path".into(), json!(v));
+        let path = format!("/api/boards/{}/settings", input.board_id);
+        match input.action.as_str() {
+            "get" => {
+                let data = self.get(&path).await?;
+                Self::json_result(&data)
+            }
+            "update" => {
+                let mut body = serde_json::Map::new();
+                if let Some(v) = input.codebase_path {
+                    body.insert("codebase_path".into(), json!(v));
+                }
+                if let Some(v) = input.github_repo {
+                    body.insert("github_repo".into(), json!(v));
+                }
+                if let Some(v) = input.context_markdown {
+                    body.insert("context_markdown".into(), json!(v));
+                }
+                if let Some(v) = input.document_links {
+                    body.insert("document_links".into(), json!(v));
+                }
+                if let Some(v) = input.variables {
+                    body.insert("variables".into(), json!(v));
+                }
+                if let Some(v) = input.tech_stack {
+                    body.insert("tech_stack".into(), json!(v));
+                }
+                if let Some(v) = input.communication_patterns {
+                    body.insert("communication_patterns".into(), json!(v));
+                }
+                if let Some(v) = input.environments {
+                    body.insert("environments".into(), json!(v));
+                }
+                if let Some(v) = input.code_conventions {
+                    body.insert("code_conventions".into(), json!(v));
+                }
+                if let Some(v) = input.testing_requirements {
+                    body.insert("testing_requirements".into(), json!(v));
+                }
+                if let Some(v) = input.api_conventions {
+                    body.insert("api_conventions".into(), json!(v));
+                }
+                if let Some(v) = input.infrastructure {
+                    body.insert("infrastructure".into(), json!(v));
+                }
+                let data = self.put(&path, &serde_json::Value::Object(body)).await?;
+                Self::json_result(&data)
+            }
+            other => Err(McpError::internal_error(
+                format!("Unknown action '{}'. Valid: get, update", other),
+                None,
+            )),
         }
-        if let Some(v) = input.github_repo {
-            body.insert("github_repo".into(), json!(v));
-        }
-        if let Some(v) = input.context_markdown {
-            body.insert("context_markdown".into(), json!(v));
-        }
-        if let Some(v) = input.document_links {
-            body.insert("document_links".into(), json!(v));
-        }
-        if let Some(v) = input.variables {
-            body.insert("variables".into(), json!(v));
-        }
-        if let Some(v) = input.tech_stack {
-            body.insert("tech_stack".into(), json!(v));
-        }
-        if let Some(v) = input.communication_patterns {
-            body.insert("communication_patterns".into(), json!(v));
-        }
-        if let Some(v) = input.environments {
-            body.insert("environments".into(), json!(v));
-        }
-        if let Some(v) = input.code_conventions {
-            body.insert("code_conventions".into(), json!(v));
-        }
-        if let Some(v) = input.testing_requirements {
-            body.insert("testing_requirements".into(), json!(v));
-        }
-        if let Some(v) = input.api_conventions {
-            body.insert("api_conventions".into(), json!(v));
-        }
-        if let Some(v) = input.infrastructure {
-            body.insert("infrastructure".into(), json!(v));
-        }
-        let data = self
-            .put(
-                &format!("/api/boards/{}/settings", input.board_id),
-                &serde_json::Value::Object(body),
-            )
-            .await?;
-        Self::json_result(&data)
     }
 
     #[tool(

@@ -163,7 +163,7 @@ Centralized fetch wrapper with error handling. All methods return typed response
 
 Key methods: `getBoard`, `createCard`, `updateCard`, `moveCard`, `deleteCard`, `generatePlan`, `stopAi`, `getCardVersions`, `restoreCardVersion`, `listBoards`, `getSetting`, `setSetting`.
 
-Uses dynamic base URL: `${window.location.protocol}//${window.location.hostname}:3000` to support both localhost and 127.0.0.1.
+Uses dynamic base URL: `${window.location.protocol}//${window.location.hostname}:21547` to support both localhost and 127.0.0.1.
 
 ## SSE Handler (`services/sse.ts`)
 
@@ -197,7 +197,7 @@ Key interfaces:
 
 ```bash
 cd frontend
-npm run dev      # Start dev server on :5173
+npm run dev      # Start dev server on :21548
 npm run build    # Production build to dist/
 npm run lint     # ESLint
 npm run type-check  # TypeScript type checking

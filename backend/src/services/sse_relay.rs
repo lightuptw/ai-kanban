@@ -10,9 +10,9 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::api::handlers::sse::WsEvent;
-use crate::domain::{AgentLog, Card};
+use crate::domain::{AgentLog, Card, NotificationType};
 
-use super::CardService;
+use super::{CardService, NotificationService};
 
 pub struct SseRelayService {
     pub opencode_url: String,
@@ -220,6 +220,18 @@ impl SseRelayService {
                     .bind(&card.id)
                     .execute(&self.db)
                     .await?;
+
+                    let _ = NotificationService::create_notification(
+                        &self.db,
+                        &self.sse_tx,
+                        None,
+                        NotificationType::AiCompleted,
+                        &format!("AI completed: {}", card.title),
+                        &format!("AI work completed for card '{}'", card.title),
+                        Some(&card.id),
+                        None,
+                    )
+                    .await;
                 } else if card.stage == "plan" {
                     sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
                         .bind("idle")

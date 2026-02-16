@@ -1,12 +1,14 @@
-import React from "react";
+import React, { useMemo } from "react";
 import styled from "@emotion/styled";
 import { keyframes } from "@emotion/react";
-import { MessageCircle } from "react-feather";
+import { MessageCircle, Bell } from "react-feather";
+import { useSelector } from "react-redux";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   Avatar,
   AvatarGroup as MuiAvatarGroup,
+  Badge,
   Chip,
   IconButton,
   Typography as MuiTypography,
@@ -15,6 +17,7 @@ import { AccountTree, StopCircle } from "@mui/icons-material";
 import { spacing } from "@mui/system";
 import { STAGE_COLORS } from "../../constants/stageColors";
 import { api } from "../../services/api";
+import type { RootState } from "../../redux/store";
 
 const TaskWrapper = styled.div<{ isDragging?: boolean }>`
   border: 1px solid ${(props) => props.theme.palette.grey[300]};
@@ -133,6 +136,19 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   aiStatus,
   onClick,
 }) => {
+  const cardNotifications = useSelector((state: RootState) =>
+    state.notifications.notifications.filter(
+      (n) => n.card_id === id && !n.is_read
+    )
+  );
+  const notificationCount = useMemo(() => cardNotifications.length, [cardNotifications]);
+  const notificationColor = useMemo(() => {
+    if (cardNotifications.some((n) => n.notification_type === "ai_error")) return "#d32f2f";
+    if (cardNotifications.some((n) => n.notification_type === "ai_question_pending")) return "#ed6c02";
+    if (cardNotifications.some((n) => n.notification_type === "review_requested")) return "#9c27b0";
+    return "#1976d2";
+  }, [cardNotifications]);
+
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   });
@@ -221,10 +237,31 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
           </AvatarGroup>
         </TaskAvatars>
 
-        {notifications > 0 && (
+        {(notifications > 0 || notificationCount > 0) && (
           <TaskNotifications>
-            <TaskNotificationsAmount>{notifications}</TaskNotificationsAmount>
-            <MessageCircleIcon />
+            {notifications > 0 && (
+              <>
+                <TaskNotificationsAmount>{notifications}</TaskNotificationsAmount>
+                <MessageCircleIcon />
+              </>
+            )}
+            {notificationCount > 0 && (
+              <Badge
+                badgeContent={notificationCount}
+                sx={{
+                  ml: 1,
+                  "& .MuiBadge-badge": {
+                    backgroundColor: notificationColor,
+                    color: "#fff",
+                    fontSize: "0.65rem",
+                    height: 16,
+                    minWidth: 16,
+                  },
+                }}
+              >
+                <Bell size={16} color={notificationColor} />
+              </Badge>
+            )}
           </TaskNotifications>
         )}
 

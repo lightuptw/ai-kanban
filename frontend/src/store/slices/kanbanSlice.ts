@@ -160,7 +160,7 @@ const kanbanSlice = createSlice({
       action: PayloadAction<{
         cardId: string;
         status: string;
-        progress?: any;
+        progress?: string | Record<string, unknown>;
         stage?: string;
         ai_session_id?: string | null;
       }>
@@ -231,31 +231,71 @@ const kanbanSlice = createSlice({
     },
     updateCardSubtaskFromWS: (
       state,
-      action: PayloadAction<{ cardId: string; subtask: unknown }>
+      action: PayloadAction<{
+        cardId: string;
+        subtask: { id: string; completed: boolean };
+        eventType: "created" | "updated" | "toggled";
+      }>
     ) => {
-      void state;
-      void action;
+      const { cardId, subtask, eventType } = action.payload;
+      for (const stage of Object.keys(state.columns) as Stage[]) {
+        const card = state.columns[stage].find((c) => c.id === cardId);
+        if (card) {
+          if (eventType === "created") {
+            card.subtask_count += 1;
+            if (subtask.completed) {
+              card.subtask_completed += 1;
+            }
+          } else if (eventType === "toggled") {
+            card.subtask_completed += subtask.completed ? 1 : -1;
+          }
+          break;
+        }
+      }
     },
     removeCardSubtaskFromWS: (
       state,
       action: PayloadAction<{ cardId: string; subtaskId: string }>
     ) => {
-      void state;
-      void action;
+      const { cardId } = action.payload;
+      for (const stage of Object.keys(state.columns) as Stage[]) {
+        const card = state.columns[stage].find((c) => c.id === cardId);
+        if (card) {
+          card.subtask_count = Math.max(0, card.subtask_count - 1);
+          break;
+        }
+      }
     },
     updateCardCommentFromWS: (
       state,
-      action: PayloadAction<{ cardId: string; comment: unknown }>
+      action: PayloadAction<{
+        cardId: string;
+        comment: { id: string };
+        eventType: "created" | "updated";
+      }>
     ) => {
-      void state;
-      void action;
+      if (action.payload.eventType !== "created") return;
+      const { cardId } = action.payload;
+      for (const stage of Object.keys(state.columns) as Stage[]) {
+        const card = state.columns[stage].find((c) => c.id === cardId);
+        if (card) {
+          card.comment_count += 1;
+          break;
+        }
+      }
     },
     removeCardCommentFromWS: (
       state,
       action: PayloadAction<{ cardId: string; commentId: string }>
     ) => {
-      void state;
-      void action;
+      const { cardId } = action.payload;
+      for (const stage of Object.keys(state.columns) as Stage[]) {
+        const card = state.columns[stage].find((c) => c.id === cardId);
+        if (card) {
+          card.comment_count = Math.max(0, card.comment_count - 1);
+          break;
+        }
+      }
     },
   },
   extraReducers: (builder) => {
