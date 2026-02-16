@@ -6,23 +6,22 @@ import {
   updateBoardFromSSE,
   removeBoardFromSSE,
   setAutoDetectStatus,
-  fetchBoard,
-  fetchBoards,
+  updateCardSubtaskFromWS,
+  removeCardSubtaskFromWS,
+  updateCardCommentFromWS,
+  removeCardCommentFromWS,
 } from "../store/slices/kanbanSlice";
 import type { AppDispatch, RootState } from "../redux/store";
 import type { Card, Board } from "../types/kanban";
 
-const SSE_URL =
-  (import.meta.env.VITE_API_URL ||
-    `${window.location.protocol}//${window.location.hostname}:21547`) +
-  "/api/events";
-
-export class SSEManager {
-  private eventSource: EventSource | null = null;
+export class WebSocketManager {
+  private ws: WebSocket | null = null;
   private dispatch: AppDispatch;
   private getState: () => RootState;
   private reconnectAttempts = 0;
   private maxReconnectDelay = 30000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isManualDisconnect = false;
 
   constructor(dispatch: AppDispatch, getState: () => RootState) {
     this.dispatch = dispatch;
@@ -30,180 +29,186 @@ export class SSEManager {
   }
 
   connect() {
-    if (this.eventSource) {
-      this.eventSource.close();
+    this.isManualDisconnect = false;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.ws) {
+      this.ws.close();
     }
 
     const token = localStorage.getItem("token") || "";
     if (!token) {
-      console.log("[SSE] No auth token, skipping connection");
+      console.log("[WS] No auth token, skipping connection");
       return;
     }
-    const sseUrl = `${SSE_URL}?token=${encodeURIComponent(token)}`;
 
-    console.log("[SSE] Connecting to", sseUrl);
-    this.eventSource = new EventSource(sseUrl);
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = import.meta.env.VITE_API_URL
+      ? new URL(import.meta.env.VITE_API_URL).host
+      : `${window.location.hostname}:21547`;
+    const wsUrl = `${protocol}//${host}/ws/events?token=${encodeURIComponent(token)}`;
 
-    this.eventSource.onopen = () => {
-      console.log("[SSE] Connected");
+    console.log("[WS] Connecting to", wsUrl);
+    this.ws = new WebSocket(wsUrl);
+
+    this.ws.onopen = () => {
+      console.log("[WS] Connected");
       this.reconnectAttempts = 0;
     };
 
-    this.eventSource.onmessage = (event) => {
+    this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         this.handleEvent(data);
       } catch (error) {
-        console.error("[SSE] Failed to parse event:", error);
+        console.error("[WS] Failed to parse event:", error);
       }
     };
 
-    this.eventSource.onerror = () => {
-      console.error("[SSE] Connection error");
-      this.eventSource?.close();
-      this.reconnect();
+    this.ws.onclose = () => {
+      console.log("[WS] Connection closed");
+      if (!this.isManualDisconnect) {
+        this.reconnect();
+      }
+    };
+
+    this.ws.onerror = (error) => {
+      console.error("[WS] Error:", error);
     };
   }
 
   private handleEvent(event: any) {
-    console.log("[SSE] Event received:", event);
-    const eventType = event.type || event.event;
+    console.log("[WS] Event:", event.type);
+    const eventType = event.type;
 
     switch (eventType) {
       case "cardCreated":
-      case "CardCreated":
         if (event.card) {
           this.dispatch(updateCardFromSSE(event.card as Card));
-        } else {
-          const boardId = this.getState().kanban.activeBoardId;
-          if (boardId) this.dispatch(fetchBoard(boardId));
         }
         break;
 
       case "cardUpdated":
-      case "CardUpdated":
         if (event.card) {
           this.dispatch(updateCardFromSSE(event.card as Card));
-        } else {
-          const boardId = this.getState().kanban.activeBoardId;
-          if (boardId) this.dispatch(fetchBoard(boardId));
         }
         break;
 
       case "cardMoved":
-      case "CardMoved":
-        if (event.card) {
-          this.dispatch(updateCardFromSSE(event.card as Card));
-        } else if (event.card_id && event.from_stage && event.to_stage) {
-          this.dispatch(moveCardInStore({
-            cardId: event.card_id,
-            fromStage: event.from_stage,
-            toStage: event.to_stage,
-          }));
+        if (event.card_id && event.from_stage && event.to_stage) {
+          this.dispatch(
+            moveCardInStore({
+              cardId: event.card_id,
+              fromStage: event.from_stage,
+              toStage: event.to_stage,
+            })
+          );
         }
         break;
 
       case "cardDeleted":
-      case "CardDeleted":
         if (event.card_id) {
           this.dispatch(removeCardFromSSE(event.card_id));
         }
         break;
 
       case "aiStatusChanged":
-      case "AiStatusChanged":
         if (event.card_id && event.status) {
-          this.dispatch(updateCardAiStatus({
-            cardId: event.card_id,
-            status: event.status,
-            progress: event.progress,
-            stage: event.stage,
-            ai_session_id: event.ai_session_id,
-          }));
+          this.dispatch(
+            updateCardAiStatus({
+              cardId: event.card_id,
+              status: event.status,
+              progress: event.progress,
+              stage: event.stage,
+              ai_session_id: event.ai_session_id,
+            })
+          );
         }
         break;
 
       case "questionCreated":
-      case "QuestionCreated":
       case "questionAnswered":
-      case "QuestionAnswered":
         if (event.card_id) {
-          this.dispatch(updateCardAiStatus({
-            cardId: event.card_id,
-            status: event.ai_status || (eventType === "QuestionCreated" || eventType === "questionCreated" ? "waiting_input" : "working"),
-          }));
+          this.dispatch(
+            updateCardAiStatus({
+              cardId: event.card_id,
+              status:
+                event.ai_status ||
+                (eventType === "questionCreated" ? "waiting_input" : "working"),
+            })
+          );
         }
         break;
 
       case "subtaskCreated":
-      case "SubtaskCreated":
       case "subtaskUpdated":
-      case "SubtaskUpdated":
       case "subtaskToggled":
-      case "SubtaskToggled":
-        {
-          const boardId = this.getState().kanban.activeBoardId;
-          if (boardId) this.dispatch(fetchBoard(boardId));
+        if (event.card_id && event.subtask) {
+          this.dispatch(
+            updateCardSubtaskFromWS({
+              cardId: event.card_id,
+              subtask: event.subtask,
+            })
+          );
         }
         break;
 
       case "subtaskDeleted":
-      case "SubtaskDeleted":
-        {
-          const boardId = this.getState().kanban.activeBoardId;
-          if (boardId) this.dispatch(fetchBoard(boardId));
+        if (event.card_id && event.subtask_id) {
+          this.dispatch(
+            removeCardSubtaskFromWS({
+              cardId: event.card_id,
+              subtaskId: event.subtask_id,
+            })
+          );
         }
         break;
 
       case "commentCreated":
-      case "CommentCreated":
       case "commentUpdated":
-      case "CommentUpdated":
+        if (event.card_id && event.comment) {
+          this.dispatch(
+            updateCardCommentFromWS({
+              cardId: event.card_id,
+              comment: event.comment,
+            })
+          );
+        }
+        break;
+
       case "commentDeleted":
-      case "CommentDeleted":
-        {
-          const boardId = this.getState().kanban.activeBoardId;
-          if (boardId) this.dispatch(fetchBoard(boardId));
+        if (event.card_id && event.comment_id) {
+          this.dispatch(
+            removeCardCommentFromWS({
+              cardId: event.card_id,
+              commentId: event.comment_id,
+            })
+          );
         }
         break;
 
       case "boardCreated":
-      case "BoardCreated":
-        if (event.board) {
-          this.dispatch(updateBoardFromSSE(event.board as Board));
-        } else {
-          this.dispatch(fetchBoards());
-        }
-        break;
-
       case "boardUpdated":
-      case "BoardUpdated":
         if (event.board) {
           this.dispatch(updateBoardFromSSE(event.board as Board));
-        } else {
-          this.dispatch(fetchBoards());
         }
         break;
 
       case "boardDeleted":
-      case "BoardDeleted":
         if (event.board_id) {
           this.dispatch(removeBoardFromSSE(event.board_id));
         }
         break;
 
       case "labelAdded":
-      case "LabelAdded":
       case "labelRemoved":
-      case "LabelRemoved":
-        {
-          const boardId = this.getState().kanban.activeBoardId;
-          if (boardId) this.dispatch(fetchBoard(boardId));
-        }
         break;
 
       case "autoDetectStatus":
-      case "AutoDetectStatus":
         if (event.board_id) {
           this.dispatch(
             setAutoDetectStatus({
@@ -215,26 +220,40 @@ export class SSEManager {
         }
         break;
 
+      case "connected":
+        console.log("[WS] Server confirmed connection");
+        break;
+
       default:
-        console.log("[SSE] Unknown event type:", eventType);
+        console.log("[WS] Unknown event:", eventType);
     }
   }
 
   private reconnect() {
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+    const delay = Math.min(
+      1000 * Math.pow(2, this.reconnectAttempts),
+      this.maxReconnectDelay
+    );
     this.reconnectAttempts++;
 
-    console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
       this.connect();
     }, delay);
   }
 
   disconnect() {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    this.isManualDisconnect = true;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
     }
   }
 }

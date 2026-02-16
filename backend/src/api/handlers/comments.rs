@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use crate::api::dto::CreateCommentRequest;
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
 use crate::domain::{Comment, KanbanError};
 use crate::services::CardService;
@@ -39,7 +39,7 @@ pub async fn create_comment(
     let pool = state.require_db()?;
     let comment = CardService::create_comment(pool, &card_id, req).await?;
 
-    let event = SseEvent::CommentCreated {
+    let event = WsEvent::CommentCreated {
         card_id: card_id.clone(),
         comment: serde_json::to_value(&comment).unwrap_or_default(),
     };
@@ -76,7 +76,7 @@ pub async fn update_comment(
         .fetch_one(pool)
         .await?;
 
-    let event = SseEvent::CommentUpdated {
+    let event = WsEvent::CommentUpdated {
         card_id,
         comment: serde_json::to_value(&comment).unwrap_or_default(),
     };
@@ -105,7 +105,7 @@ pub async fn delete_comment(
         return Err(KanbanError::NotFound(format!("Comment not found: {}", id)));
     }
 
-    let event = SseEvent::CommentDeleted {
+    let event = WsEvent::CommentDeleted {
         card_id,
         comment_id: id.clone(),
     };

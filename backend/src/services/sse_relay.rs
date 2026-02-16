@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::domain::{AgentLog, Card};
 
 use super::CardService;
@@ -153,7 +153,7 @@ impl SseRelayService {
             let log = self
                 .create_agent_log(&card, session_id, event_type, properties)
                 .await?;
-            let log_event = SseEvent::AgentLogCreated {
+            let log_event = WsEvent::AgentLogCreated {
                 card_id: card.id.clone(),
                 log,
             };
@@ -308,7 +308,7 @@ impl SseRelayService {
         let updated_card = CardService::get_card_model(&self.db, &card.id).await?;
         let progress =
             serde_json::from_str(&updated_card.ai_progress).unwrap_or_else(|_| json!({}));
-        let event = SseEvent::AiStatusChanged {
+        let event = WsEvent::AiStatusChanged {
             card_id: updated_card.id.clone(),
             status: updated_card.ai_status.clone(),
             progress: progress.clone(),
@@ -321,7 +321,7 @@ impl SseRelayService {
         }
 
         if updated_card.stage != card.stage {
-            let move_event = SseEvent::CardMoved {
+            let move_event = WsEvent::CardMoved {
                 card_id: updated_card.id,
                 from_stage: card.stage.clone(),
                 to_stage: updated_card.stage,

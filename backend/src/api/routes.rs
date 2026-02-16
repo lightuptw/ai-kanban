@@ -126,7 +126,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         )
         .route("/api/pick-files", post(handlers::picker::pick_files))
         .route("/api/auth/me", get(auth::handlers::me))
-        .route("/api/events", get(handlers::sse::sse_handler))
+        .route("/ws/events", get(handlers::ws::ws_events_handler))
         .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))
         .route("/api/board", get(handlers::cards::get_board))
         .route("/api/labels", get(handlers::labels::list_labels))

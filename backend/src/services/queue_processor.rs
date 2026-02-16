@@ -5,7 +5,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::domain::{Card, KanbanError};
 
 use super::{AiDispatchService, CardService, GitWorktreeService};
@@ -119,7 +119,7 @@ impl QueueProcessor {
 
                 match dispatcher.dispatch_card(&dispatch_card, &subtasks, &self.db).await {
                     Ok(_) => {
-                        let event = SseEvent::AiStatusChanged {
+                        let event = WsEvent::AiStatusChanged {
                             card_id: dispatch_card.id.clone(),
                             status: "dispatched".to_string(),
                             progress: json!({}),
@@ -271,7 +271,7 @@ impl QueueProcessor {
             .fetch_optional(&self.db)
             .await?;
 
-        let event = SseEvent::AiStatusChanged {
+        let event = WsEvent::AiStatusChanged {
             card_id: card_id.to_string(),
             status: "failed".to_string(),
             progress: json!({}),

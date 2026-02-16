@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::api::state::AppState;
 use crate::domain::KanbanError;
 
@@ -70,7 +70,7 @@ pub async fn create_board(
     .fetch_one(db)
     .await?;
 
-    let event = SseEvent::BoardCreated {
+    let event = WsEvent::BoardCreated {
         board: serde_json::to_value(&board).unwrap_or_default(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {
@@ -97,7 +97,7 @@ pub async fn update_board(
     .fetch_one(db)
     .await?;
 
-    let event = SseEvent::BoardUpdated {
+    let event = WsEvent::BoardUpdated {
         board: serde_json::to_value(&board).unwrap_or_default(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {
@@ -122,7 +122,7 @@ pub async fn delete_board(
         return Err(KanbanError::NotFound(format!("Board {} not found", id)));
     }
 
-    let event = SseEvent::BoardDeleted {
+    let event = WsEvent::BoardDeleted {
         board_id: id.clone(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {
@@ -149,7 +149,7 @@ pub async fn reorder_board(
     .fetch_one(db)
     .await?;
 
-    let event = SseEvent::BoardUpdated {
+    let event = WsEvent::BoardUpdated {
         board: serde_json::to_value(&board).unwrap_or_default(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {

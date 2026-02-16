@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
 use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, Stage};
 use crate::services::git_worktree::{DiffResult, MergeResult};
@@ -68,9 +68,8 @@ pub async fn create_card(
     let pool = state.require_db()?;
     let card = CardService::create_card(pool, req).await?;
 
-    let event = SseEvent::CardCreated {
-        card_id: card.id.clone(),
-        title: card.title.clone(),
+    let event = WsEvent::CardCreated {
+        card: serde_json::to_value(&card).unwrap_or_default(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {
         let _ = state.sse_tx.send(payload);
@@ -200,14 +199,14 @@ pub async fn restore_card_version(
     .execute(pool)
     .await?;
 
-    let event = SseEvent::CardUpdated {
-        card_id: card_id.clone(),
+    let card = CardService::get_card_by_id(pool, &card_id).await?;
+    let event = WsEvent::CardUpdated {
+        card: serde_json::to_value(&card).unwrap_or_default(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {
         let _ = state.sse_tx.send(payload);
     }
 
-    let card = CardService::get_card_by_id(pool, &card_id).await?;
     Ok(Json(card))
 }
 
@@ -219,8 +218,8 @@ pub async fn update_card(
     let pool = state.require_db()?;
     let card = CardService::update_card(pool, &id, req).await?;
 
-    let event = SseEvent::CardUpdated {
-        card_id: card.id.clone(),
+    let event = WsEvent::CardUpdated {
+        card: serde_json::to_value(&card).unwrap_or_default(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {
         let _ = state.sse_tx.send(payload);
@@ -301,7 +300,7 @@ pub async fn move_card(
 
         let updated_card = CardService::get_card_by_id(pool, &id).await?;
 
-        let event = SseEvent::AiStatusChanged {
+        let event = WsEvent::AiStatusChanged {
             card_id: id,
             status: updated_card.ai_status.clone(),
             progress: updated_card.ai_progress.clone(),
@@ -686,7 +685,7 @@ pub async fn merge_card(
             .execute(pool)
             .await?;
 
-        let event = SseEvent::CardMoved {
+        let event = WsEvent::CardMoved {
             card_id: id.clone(),
             from_stage: "review".to_string(),
             to_stage: "done".to_string(),
@@ -761,7 +760,7 @@ pub async fn reject_card(
         }
     }
 
-    let event = SseEvent::CardMoved {
+    let event = WsEvent::CardMoved {
         card_id: id.clone(),
         from_stage: "review".to_string(),
         to_stage: "in_progress".to_string(),
@@ -831,7 +830,7 @@ pub async fn stop_ai(
         }
     }
 
-    let event = SseEvent::AiStatusChanged {
+    let event = WsEvent::AiStatusChanged {
         card_id: id.clone(),
         status: "cancelled".to_string(),
         progress: json!({}),
@@ -917,7 +916,7 @@ pub async fn resume_ai(
                 .execute(pool)
                 .await?;
 
-            let event = SseEvent::AiStatusChanged {
+            let event = WsEvent::AiStatusChanged {
                 card_id: id.clone(),
                 status: resumed_status.to_string(),
                 progress: json!({}),
@@ -1011,7 +1010,7 @@ pub async fn resume_ai(
         .execute(pool)
         .await?;
 
-    let event = SseEvent::AiStatusChanged {
+    let event = WsEvent::AiStatusChanged {
         card_id: id.clone(),
         status: fallback_status.to_string(),
         progress: json!({}),
@@ -1058,7 +1057,7 @@ pub async fn delete_card(
 
     CardService::delete_card(pool, &id).await?;
 
-    let event = SseEvent::CardDeleted {
+    let event = WsEvent::CardDeleted {
         card_id: id.clone(),
     };
     if let Ok(payload) = serde_json::to_string(&event) {

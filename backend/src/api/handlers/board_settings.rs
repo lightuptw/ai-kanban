@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::api::state::AppState;
 use crate::domain::KanbanError;
 
@@ -284,7 +284,7 @@ pub async fn auto_detect_board_settings(
     .execute(pool)
     .await?;
 
-    let event = SseEvent::AutoDetectStatus {
+    let event = WsEvent::AutoDetectStatus {
         board_id: board_id.clone(),
         status: "running".to_string(),
         session_id: Some(session_id.clone()),
@@ -372,7 +372,7 @@ Board ID: {board_id}
             tracing::warn!(error = %e, board_id = board_id_clone.as_str(), "Failed to persist auto-detect status update");
         }
 
-        let event = SseEvent::AutoDetectStatus {
+        let event = WsEvent::AutoDetectStatus {
             board_id: board_id_clone,
             status,
             session_id: None,

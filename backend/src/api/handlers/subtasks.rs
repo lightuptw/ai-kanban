@@ -6,7 +6,7 @@ use axum::{
 use sqlx;
 
 use crate::api::dto::{CreateSubtaskRequest, UpdateSubtaskRequest};
-use crate::api::handlers::sse::SseEvent;
+use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
 use crate::domain::{KanbanError, Subtask};
 use crate::services::CardService;
@@ -19,7 +19,7 @@ pub async fn create_subtask(
     let pool = state.require_db()?;
     let subtask = CardService::create_subtask(pool, &card_id, req).await?;
 
-    let event = SseEvent::SubtaskCreated {
+    let event = WsEvent::SubtaskCreated {
         card_id: card_id.clone(),
         subtask: serde_json::to_value(&subtask).unwrap_or_default(),
     };
@@ -43,7 +43,7 @@ pub async fn update_subtask(
 
     let subtask = CardService::update_subtask(pool, &id, req).await?;
 
-    let event = SseEvent::SubtaskUpdated {
+    let event = WsEvent::SubtaskUpdated {
         card_id,
         subtask: serde_json::to_value(&subtask).unwrap_or_default(),
     };
@@ -66,7 +66,7 @@ pub async fn delete_subtask(
 
     CardService::delete_subtask(pool, &id).await?;
 
-    let event = SseEvent::SubtaskDeleted {
+    let event = WsEvent::SubtaskDeleted {
         card_id,
         subtask_id: id.clone(),
     };

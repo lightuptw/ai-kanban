@@ -15,11 +15,11 @@ import routes from "./routes";
 import useTheme from "./hooks/useTheme";
 import { store } from "./redux/store";
 import createEmotionCache from "./utils/createEmotionCache";
-import { SSEManager } from "./services/sse";
+import { WebSocketManager } from "./services/sse";
 
 const clientSideEmotionCache = createEmotionCache();
 
-let sseManager: SSEManager | null = null;
+let wsManager: WebSocketManager | null = null;
 
 function App({ emotionCache = clientSideEmotionCache }) {
   const content = useRoutes(routes);
@@ -27,15 +27,15 @@ function App({ emotionCache = clientSideEmotionCache }) {
   const { theme } = useTheme();
 
   useEffect(() => {
-    if (!sseManager) {
-      sseManager = new SSEManager(store.dispatch, store.getState);
-      sseManager.connect();
+    if (!wsManager) {
+      wsManager = new WebSocketManager(store.dispatch, store.getState);
+      wsManager.connect();
     }
 
     return () => {
-      if (sseManager) {
-        sseManager.disconnect();
-        sseManager = null;
+      if (wsManager) {
+        wsManager.disconnect();
+        wsManager = null;
       }
     };
   }, []);

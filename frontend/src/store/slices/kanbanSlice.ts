@@ -229,6 +229,34 @@ const kanbanSlice = createSlice({
     optimisticReorderBoards: (state, action: PayloadAction<Board[]>) => {
       state.boards = action.payload;
     },
+    updateCardSubtaskFromWS: (
+      state,
+      action: PayloadAction<{ cardId: string; subtask: unknown }>
+    ) => {
+      void state;
+      void action;
+    },
+    removeCardSubtaskFromWS: (
+      state,
+      action: PayloadAction<{ cardId: string; subtaskId: string }>
+    ) => {
+      void state;
+      void action;
+    },
+    updateCardCommentFromWS: (
+      state,
+      action: PayloadAction<{ cardId: string; comment: unknown }>
+    ) => {
+      void state;
+      void action;
+    },
+    removeCardCommentFromWS: (
+      state,
+      action: PayloadAction<{ cardId: string; commentId: string }>
+    ) => {
+      void state;
+      void action;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -307,7 +335,23 @@ const kanbanSlice = createSlice({
   },
 });
 
-export const { setSelectedCard, setActiveBoard, setAutoDetectStatus, optimisticMoveCard, revertMoveCard, updateCardFromSSE, removeCardFromSSE, optimisticReorderBoards, updateCardAiStatus, moveCardInStore, updateBoardFromSSE, removeBoardFromSSE } =
-  kanbanSlice.actions;
+export const {
+  setSelectedCard,
+  setActiveBoard,
+  setAutoDetectStatus,
+  optimisticMoveCard,
+  revertMoveCard,
+  updateCardFromSSE,
+  removeCardFromSSE,
+  optimisticReorderBoards,
+  updateCardAiStatus,
+  moveCardInStore,
+  updateBoardFromSSE,
+  removeBoardFromSSE,
+  updateCardSubtaskFromWS,
+  removeCardSubtaskFromWS,
+  updateCardCommentFromWS,
+  removeCardCommentFromWS,
+} = kanbanSlice.actions;
 
 export default kanbanSlice.reducer;

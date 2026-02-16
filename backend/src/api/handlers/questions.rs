@@ -4,10 +4,11 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::api::AppState;
+use crate::api::handlers::sse::WsEvent;
 use crate::domain::{AiQuestion, KanbanError};
 
 #[derive(Debug, Deserialize)]
@@ -109,11 +110,10 @@ pub async fn create_question(
             .fetch_one(pool)
             .await?;
 
-    let event = json!({
-        "type": "QuestionCreated",
-        "card_id": card_id,
-        "question": question_row,
-    });
+    let event = WsEvent::QuestionCreated {
+        card_id,
+        question: serde_json::to_value(&question_row).unwrap_or_default(),
+    };
     let _ = state
         .sse_tx
         .send(serde_json::to_string(&event).unwrap_or_default());
@@ -190,11 +190,10 @@ pub async fn answer_question(
             .fetch_one(pool)
             .await?;
 
-    let event = json!({
-        "type": "QuestionAnswered",
-        "card_id": card_id,
-        "question": question_row,
-    });
+    let event = WsEvent::QuestionAnswered {
+        card_id,
+        question: serde_json::to_value(&question_row).unwrap_or_default(),
+    };
     let _ = state
         .sse_tx
         .send(serde_json::to_string(&event).unwrap_or_default());

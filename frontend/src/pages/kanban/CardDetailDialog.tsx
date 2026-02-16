@@ -264,6 +264,8 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   const [textAnswers, setTextAnswers] = useState<Record<string, string>>({});
   const [submittingQuestion, setSubmittingQuestion] = useState<string | null>(null);
   const loadedCardRef = useRef<{ title: string; description: string; working_directory: string; linked_documents: string; ai_agent: string } | null>(null);
+  const cardIdRef = useRef(cardId);
+  cardIdRef.current = cardId;
 
   useEffect(() => {
     if (card) {
@@ -333,7 +335,7 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
   }, [card?.stage, card?.branch_name, cardId]);
 
   useEffect(() => {
-    if (!card || !loadedCardRef.current) {
+    if (!cardId || !loadedCardRef.current) {
       return;
     }
 
@@ -353,19 +355,28 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       if (!cancelled) {
-        dispatch(updateCard({
-          id: card.id,
-          data: { title, description, priority, working_directory: workingDir, linked_documents: linkedDocs, ai_agent: aiAgent || "" },
-        }));
+        dispatch(
+          updateCard({
+            id: cardIdRef.current,
+            data: {
+              title,
+              description,
+              priority,
+              working_directory: workingDir,
+              linked_documents: linkedDocs,
+              ai_agent: aiAgent || "",
+            },
+          })
+        );
         loadedCardRef.current = currentValues;
       }
-    }, 500);
+    }, 800);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [card, title, description, workingDir, linkedDocs, aiAgent, priority, dispatch]);
+  }, [title, description, workingDir, linkedDocs, aiAgent, priority, dispatch, cardId]);
 
   const handleToggleVersions = async () => {
     if (!card) return;
