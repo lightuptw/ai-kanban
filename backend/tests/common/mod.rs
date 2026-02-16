@@ -5,7 +5,96 @@ use sqlx::SqlitePool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-pub async fn setup_test_db() -> (SqlitePool, String) {
+pub async fn make_multipart_request(
+    app: Router,
+    uri: &str,
+    field_name: &str,
+    file_name: &str,
+    content_type: &str,
+    file_bytes: Vec<u8>,
+    auth_token: Option<&str>,
+) -> (StatusCode, String) {
+    let boundary = "----TestBoundary7MA4YWxkTrZu0gW";
+    let mut body_bytes = Vec::new();
+
+    body_bytes.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body_bytes.extend_from_slice(
+        format!(
+            "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+            field_name, file_name
+        )
+        .as_bytes(),
+    );
+    body_bytes
+        .extend_from_slice(format!("Content-Type: {}\r\n\r\n", content_type).as_bytes());
+    body_bytes.extend_from_slice(&file_bytes);
+    body_bytes.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    let mut request = Request::builder().uri(uri).method("POST").header(
+        "content-type",
+        format!("multipart/form-data; boundary={}", boundary),
+    );
+
+    if let Some(token) = auth_token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let request = request
+        .body(Body::from(body_bytes))
+        .expect("Failed to build multipart request");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("Multipart request failed");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("Failed to read response body");
+    let body_str = String::from_utf8(body.to_vec()).unwrap_or_default();
+
+    (status, body_str)
+}
+
+pub async fn make_raw_request(
+    app: Router,
+    method: &str,
+    uri: &str,
+    auth_token: Option<&str>,
+) -> (StatusCode, Vec<u8>, Option<String>) {
+    let mut request = Request::builder().uri(uri).method(method);
+
+    if let Some(token) = auth_token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let request = request
+        .body(Body::empty())
+        .expect("Failed to build request");
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("Request failed");
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("Failed to read response body");
+
+    (status, body.to_vec(), content_type)
+}
+
+pub async fn setup_test_db_with_user_id() -> (SqlitePool, String, String) {
+    let (pool, token, user_id) = setup_test_db_inner().await;
+    (pool, token, user_id)
+}
+
+async fn setup_test_db_inner() -> (SqlitePool, String, String) {
     let pool = SqlitePool::connect("sqlite::memory:")
         .await
         .expect("Failed to create test database");
@@ -51,6 +140,11 @@ pub async fn setup_test_db() -> (SqlitePool, String) {
     .await
     .expect("Failed to ensure default board");
 
+    (pool, token, user_id)
+}
+
+pub async fn setup_test_db() -> (SqlitePool, String) {
+    let (pool, token, _) = setup_test_db_inner().await;
     (pool, token)
 }
 

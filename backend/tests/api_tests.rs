@@ -31,6 +31,23 @@ async fn test_app() -> (axum::Router, String) {
     (app, token)
 }
 
+async fn test_app_with_user_id() -> (axum::Router, String, String) {
+    let (pool, token, user_id) = common::setup_test_db_with_user_id().await;
+    let (sse_tx, _) = tokio::sync::broadcast::channel(100);
+    let http_client = reqwest::Client::new();
+    let config = test_config();
+
+    let state = kanban_backend::api::state::AppState {
+        db: Some(pool),
+        sse_tx,
+        http_client,
+        config: config.clone(),
+    };
+
+    let app = kanban_backend::api::routes::create_router(state, &config);
+    (app, token, user_id)
+}
+
 async fn test_app_with_pool() -> (axum::Router, String, sqlx::SqlitePool) {
     let (pool, token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
@@ -1340,4 +1357,285 @@ async fn test_move_card_to_review_creates_notification() {
             && n["card_id"] == card_id
             && n["title"].as_str().unwrap_or_default().contains("Review requested")
     }));
+}
+
+// ---------------------------------------------------------------------------
+// Avatar
+// ---------------------------------------------------------------------------
+
+fn minimal_jpeg() -> Vec<u8> {
+    vec![
+        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
+        0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43,
+        0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07, 0x07, 0x09,
+        0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
+        0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20,
+        0x24, 0x2E, 0x27, 0x20, 0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29,
+        0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D, 0x38, 0x32,
+        0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01,
+        0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00,
+        0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0xFF, 0xC4, 0x00, 0xB5, 0x10, 0x00, 0x02, 0x01, 0x03,
+        0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00, 0x01, 0x7D,
+        0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06,
+        0x13, 0x51, 0x61, 0x07, 0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xA1, 0x08,
+        0x23, 0x42, 0xB1, 0xC1, 0x15, 0x52, 0xD1, 0xF0, 0x24, 0x33, 0x62, 0x72,
+        0x82, 0x09, 0x0A, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x25, 0x26, 0x27, 0x28,
+        0x29, 0x2A, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x43, 0x44, 0x45,
+        0x46, 0x47, 0x48, 0x49, 0x4A, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59,
+        0x5A, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x73, 0x74, 0x75,
+        0x76, 0x77, 0x78, 0x79, 0x7A, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+        0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x7B, 0x94,
+        0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xD9,
+    ]
+}
+
+fn minimal_png() -> Vec<u8> {
+    vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00,
+        0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+        0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, 0x33, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ]
+}
+
+#[tokio::test]
+async fn test_avatar_upload_jpeg() {
+    let (app, token, user_id) = test_app_with_user_id().await;
+
+    let (status, body) = common::make_multipart_request(
+        app.clone(),
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.jpg",
+        "image/jpeg",
+        minimal_jpeg(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Upload JPEG failed: {}", body);
+    let user: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(user["has_avatar"], true);
+    assert_eq!(user["id"], user_id);
+}
+
+#[tokio::test]
+async fn test_avatar_upload_png() {
+    let (app, token, _) = test_app_with_user_id().await;
+
+    let (status, body) = common::make_multipart_request(
+        app,
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.png",
+        "image/png",
+        minimal_png(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Upload PNG failed: {}", body);
+    let user: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(user["has_avatar"], true);
+}
+
+#[tokio::test]
+async fn test_avatar_upload_reject_invalid_format() {
+    let (app, token, _) = test_app_with_user_id().await;
+
+    let (status, _) = common::make_multipart_request(
+        app,
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.gif",
+        "image/gif",
+        vec![0x47, 0x49, 0x46, 0x38, 0x39, 0x61],
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_avatar_upload_reject_oversized() {
+    let (app, token, _) = test_app_with_user_id().await;
+
+    let mut oversized = minimal_jpeg();
+    oversized.resize(3 * 1024 * 1024, 0x00);
+
+    let (status, _) = common::make_multipart_request(
+        app,
+        "/api/auth/avatar",
+        "avatar",
+        "big.jpg",
+        "image/jpeg",
+        oversized,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_avatar_get_returns_image() {
+    let (app, token, user_id) = test_app_with_user_id().await;
+
+    let (status, _) = common::make_multipart_request(
+        app.clone(),
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.jpg",
+        "image/jpeg",
+        minimal_jpeg(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body_bytes, content_type) = common::make_raw_request(
+        app,
+        "GET",
+        &format!("/api/auth/avatar/{}", user_id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("image/jpeg"));
+    assert!(!body_bytes.is_empty());
+}
+
+#[tokio::test]
+async fn test_avatar_get_missing_returns_404() {
+    let (app, _, user_id) = test_app_with_user_id().await;
+
+    let (status, _, _) = common::make_raw_request(
+        app,
+        "GET",
+        &format!("/api/auth/avatar/{}", user_id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_avatar_delete() {
+    let (app, token, user_id) = test_app_with_user_id().await;
+
+    let (status, _) = common::make_multipart_request(
+        app.clone(),
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.jpg",
+        "image/jpeg",
+        minimal_jpeg(),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = common::make_request(
+        app.clone(),
+        "DELETE",
+        "/api/auth/avatar",
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, _) = common::make_raw_request(
+        app,
+        "GET",
+        &format!("/api/auth/avatar/{}", user_id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_avatar_upload_requires_auth() {
+    let (app, _, _) = test_app_with_user_id().await;
+
+    let (status, _) = common::make_multipart_request(
+        app,
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.jpg",
+        "image/jpeg",
+        minimal_jpeg(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_auth_register_returns_has_avatar() {
+    let (app, _) = test_app().await;
+
+    let reg_body = json!({
+        "username": "avatar_user",
+        "password": "SecurePass123",
+        "nickname": "Avatar User"
+    })
+    .to_string();
+
+    let (status, body) = common::make_request(
+        app,
+        "POST",
+        "/api/auth/register",
+        Some(reg_body),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Register failed: {}", body);
+    let auth: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(auth["user"]["has_avatar"], false);
+}
+
+#[tokio::test]
+async fn test_avatar_etag_304() {
+    let (app, token, user_id) = test_app_with_user_id().await;
+
+    common::make_multipart_request(
+        app.clone(),
+        "/api/auth/avatar",
+        "avatar",
+        "avatar.jpg",
+        "image/jpeg",
+        minimal_jpeg(),
+        Some(&token),
+    )
+    .await;
+
+    let response = {
+        let request = axum::http::Request::builder()
+            .uri(format!("/api/auth/avatar/{}", user_id))
+            .method("GET")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        tower::ServiceExt::oneshot(app.clone(), request).await.unwrap()
+    };
+    let etag = response
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let response = {
+        let request = axum::http::Request::builder()
+            .uri(format!("/api/auth/avatar/{}", user_id))
+            .method("GET")
+            .header("If-None-Match", &etag)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        tower::ServiceExt::oneshot(app, request).await.unwrap()
+    };
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
 }
