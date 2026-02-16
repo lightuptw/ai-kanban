@@ -92,7 +92,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mcp_service = StreamableHttpService::new(
         move || {
             Ok(KanbanMcp::new(
-                mcp_pool.clone().expect("DB required for MCP"),
+                mcp_pool
+                    .clone()
+                    .ok_or_else(|| std::io::Error::other("Database pool not available for MCP"))?,
                 None,
             ))
         },

@@ -67,7 +67,7 @@ impl CardService {
         // Validate stage
         stage
             .parse::<Stage>()
-            .map_err(|e| KanbanError::BadRequest(e))?;
+            .map_err(KanbanError::BadRequest)?;
 
         // New cards get position = max_position + 1000
         let row = sqlx::query("SELECT COALESCE(MAX(position), 0) as max_pos FROM cards WHERE stage = ?")
@@ -238,7 +238,7 @@ impl CardService {
 
         stage
             .parse::<Stage>()
-            .map_err(|e| KanbanError::BadRequest(e))?;
+            .map_err(KanbanError::BadRequest)?;
 
         Self::save_card_version_snapshot(pool, &existing_for_snapshot, "user").await?;
 
@@ -270,7 +270,7 @@ impl CardService {
         let new_stage = req
             .stage
             .parse::<Stage>()
-            .map_err(|e| KanbanError::BadRequest(e))?;
+            .map_err(KanbanError::BadRequest)?;
 
         // Check card exists and get current stage
         let existing: Card = sqlx::query_as("SELECT * FROM cards WHERE id = ?")

@@ -138,11 +138,15 @@ impl AiDispatchService {
                 }
                 Ok(response) => {
                     tracing::warn!(card_id = card_id.as_str(), status = %response.status(), "OpenCode message returned non-success");
-                    let _ = Self::mark_failed(&db_clone, &card_id).await;
+                    if let Err(e) = Self::mark_failed(&db_clone, &card_id).await {
+                        tracing::warn!(error = %e, card_id = card_id.as_str(), "Failed to mark card as failed after non-success OpenCode response");
+                    }
                 }
                 Err(err) => {
                     tracing::warn!(card_id = card_id.as_str(), error = %err, "Failed to send work plan message");
-                    let _ = Self::mark_failed(&db_clone, &card_id).await;
+                    if let Err(e) = Self::mark_failed(&db_clone, &card_id).await {
+                        tracing::warn!(error = %e, card_id = card_id.as_str(), "Failed to mark card as failed after message send error");
+                    }
                 }
             }
         });

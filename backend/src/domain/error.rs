@@ -25,12 +25,12 @@ pub enum KanbanError {
 
 impl IntoResponse for KanbanError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            KanbanError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            KanbanError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            KanbanError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
-            KanbanError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-            KanbanError::OpenCodeError(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
+        let (status, message) = match self {
+            KanbanError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            KanbanError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            KanbanError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            KanbanError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            KanbanError::OpenCodeError(msg) => (StatusCode::BAD_GATEWAY, msg),
             KanbanError::Database(err) => {
                 tracing::error!("Database error: {:?}", err);
                 (

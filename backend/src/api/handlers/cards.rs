@@ -19,6 +19,20 @@ pub struct BoardQuery {
     pub board_id: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct BoardContextRow {
+    codebase_path: String,
+    context_markdown: String,
+    tech_stack: String,
+    communication_patterns: String,
+    environments: String,
+    code_conventions: String,
+    testing_requirements: String,
+    api_conventions: String,
+    infrastructure: String,
+    github_repo: String,
+}
+
 async fn get_card_codebase_path(pool: &SqlitePool, card_id: &str) -> Result<String, KanbanError> {
     let board_id = sqlx::query_scalar::<_, String>("SELECT board_id FROM cards WHERE id = ?")
         .bind(card_id)
@@ -170,7 +184,7 @@ pub async fn restore_card_version(
 
     stage
         .parse::<Stage>()
-        .map_err(|e| KanbanError::BadRequest(e))?;
+        .map_err(KanbanError::BadRequest)?;
 
     sqlx::query(
         "UPDATE cards SET title = ?, description = ?, stage = ?, priority = ?, working_directory = ?, linked_documents = ?, updated_at = ? WHERE id = ?",
@@ -257,13 +271,16 @@ pub async fn move_card(
                     &previous_card.branch_name,
                 );
 
-                let _ = sqlx::query(
+                if let Err(e) = sqlx::query(
                     "UPDATE cards SET branch_name = '', worktree_path = '', working_directory = '.', updated_at = ? WHERE id = ?",
                 )
                 .bind(chrono::Utc::now().to_rfc3339())
                 .bind(&id)
                 .execute(pool)
-                .await;
+                .await
+                {
+                    tracing::warn!(error = %e, card_id = %id, "Failed to clear worktree metadata for completed card");
+                }
             }
         }
     }
@@ -409,7 +426,7 @@ pub async fn generate_plan(
         .unwrap_or_default();
 
     let board_context = if !board_id.is_empty() {
-        let settings: Option<(String, String, String, String, String, String, String, String, String, String)> =
+        let settings: Option<BoardContextRow> =
             sqlx::query_as(
                 "SELECT codebase_path, context_markdown, tech_stack, communication_patterns, environments, code_conventions, testing_requirements, api_conventions, infrastructure, github_repo FROM board_settings WHERE board_id = ?",
             )
@@ -419,56 +436,45 @@ pub async fn generate_plan(
             .ok()
             .flatten();
 
-        if let Some((
-            codebase_path,
-            context_markdown,
-            tech_stack,
-            communication_patterns,
-            environments,
-            code_conventions,
-            testing_requirements,
-            api_conventions,
-            infrastructure,
-            github_repo,
-        )) = settings
+        if let Some(ctx) = settings
         {
             let mut context_sections = Vec::new();
 
-            if !context_markdown.is_empty() {
-                context_sections.push(format!("{}\n\n", context_markdown));
+            if !ctx.context_markdown.is_empty() {
+                context_sections.push(format!("{}\n\n", ctx.context_markdown));
             }
-            if !codebase_path.trim().is_empty() {
-                context_sections.push(format!("### Codebase Path\n{}\n\n", codebase_path));
+            if !ctx.codebase_path.trim().is_empty() {
+                context_sections.push(format!("### Codebase Path\n{}\n\n", ctx.codebase_path));
             }
-            if !tech_stack.trim().is_empty() {
-                context_sections.push(format!("### Tech Stack\n{}\n\n", tech_stack));
+            if !ctx.tech_stack.trim().is_empty() {
+                context_sections.push(format!("### Tech Stack\n{}\n\n", ctx.tech_stack));
             }
-            if !communication_patterns.trim().is_empty() {
+            if !ctx.communication_patterns.trim().is_empty() {
                 context_sections.push(format!(
                     "### Communication Patterns\n{}\n\n",
-                    communication_patterns
+                    ctx.communication_patterns
                 ));
             }
-            if !environments.trim().is_empty() {
-                context_sections.push(format!("### Environments\n{}\n\n", environments));
+            if !ctx.environments.trim().is_empty() {
+                context_sections.push(format!("### Environments\n{}\n\n", ctx.environments));
             }
-            if !code_conventions.trim().is_empty() {
-                context_sections.push(format!("### Code Conventions\n{}\n\n", code_conventions));
+            if !ctx.code_conventions.trim().is_empty() {
+                context_sections.push(format!("### Code Conventions\n{}\n\n", ctx.code_conventions));
             }
-            if !testing_requirements.trim().is_empty() {
+            if !ctx.testing_requirements.trim().is_empty() {
                 context_sections.push(format!(
                     "### Testing Requirements\n{}\n\n",
-                    testing_requirements
+                    ctx.testing_requirements
                 ));
             }
-            if !api_conventions.trim().is_empty() {
-                context_sections.push(format!("### API Conventions\n{}\n\n", api_conventions));
+            if !ctx.api_conventions.trim().is_empty() {
+                context_sections.push(format!("### API Conventions\n{}\n\n", ctx.api_conventions));
             }
-            if !infrastructure.trim().is_empty() {
-                context_sections.push(format!("### Infrastructure\n{}\n\n", infrastructure));
+            if !ctx.infrastructure.trim().is_empty() {
+                context_sections.push(format!("### Infrastructure\n{}\n\n", ctx.infrastructure));
             }
-            if !github_repo.trim().is_empty() {
-                context_sections.push(format!("### GitHub Repository\n{}\n\n", github_repo));
+            if !ctx.github_repo.trim().is_empty() {
+                context_sections.push(format!("### GitHub Repository\n{}\n\n", ctx.github_repo));
             }
 
             context_sections.concat()
@@ -548,21 +554,27 @@ CRITICAL: The card_id for ALL tool calls is: {}",
                     status = %response.status(),
                     "Plan generation message returned non-success"
                 );
-                let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                if let Err(e) = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
                     .bind("failed")
                     .bind(chrono::Utc::now().to_rfc3339())
                     .bind(&card_id_clone)
                     .execute(&db_clone)
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, card_id = card_id_clone.as_str(), "Failed to update card status after plan dispatch failure");
+                }
             }
             Err(err) => {
                 tracing::warn!(card_id = card_id_clone.as_str(), error = %err, "Failed to send plan generation message");
-                let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                if let Err(e) = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
                     .bind("failed")
                     .bind(chrono::Utc::now().to_rfc3339())
                     .bind(&card_id_clone)
                     .execute(&db_clone)
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, card_id = card_id_clone.as_str(), "Failed to update card status after plan message error");
+                }
             }
         }
     });
@@ -806,13 +818,16 @@ pub async fn stop_ai(
                 &card.worktree_path,
                 &card.branch_name,
             );
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 "UPDATE cards SET branch_name = '', worktree_path = '', working_directory = '.', updated_at = ? WHERE id = ?",
             )
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(&id)
             .execute(pool)
-            .await;
+            .await
+            {
+                tracing::warn!(error = %e, card_id = %id, "Failed to clear worktree metadata after AI stop");
+            }
         }
     }
 
@@ -943,21 +958,27 @@ pub async fn resume_ai(
                             status = %response.status(),
                             "Resume message returned non-success"
                         );
-                        let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                        if let Err(e) = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
                             .bind("failed")
                             .bind(chrono::Utc::now().to_rfc3339())
                             .bind(&card_id_clone)
                             .execute(&db_clone)
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(error = %e, card_id = card_id_clone.as_str(), "Failed to update card status after resume non-success response");
+                        }
                     }
                     Err(err) => {
                         tracing::warn!(card_id = card_id_clone.as_str(), error = %err, "Failed to send resume message");
-                        let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+                        if let Err(e) = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
                             .bind("failed")
                             .bind(chrono::Utc::now().to_rfc3339())
                             .bind(&card_id_clone)
                             .execute(&db_clone)
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(error = %e, card_id = card_id_clone.as_str(), "Failed to update card status after resume message error");
+                        }
                     }
                 }
             });

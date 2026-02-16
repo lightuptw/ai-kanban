@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_health_check() {
-    let pool = common::setup_test_db().await;
+    let (pool, _token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let http_client = reqwest::Client::new();
     
@@ -27,7 +27,7 @@ async fn test_health_check() {
 
     let app = kanban_backend::api::routes::create_router(state, &config);
     
-    let (status, body) = common::make_request(app, "GET", "/health", None).await;
+    let (status, body) = common::make_request(app, "GET", "/health", None, None).await;
     
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("\"status\":\"ok\""));
@@ -35,7 +35,7 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_create_and_get_card() {
-    let pool = common::setup_test_db().await;
+    let (pool, token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let http_client = reqwest::Client::new();
     
@@ -68,6 +68,7 @@ async fn test_create_and_get_card() {
         "POST",
         "/api/cards",
         Some(create_body),
+        Some(&token),
     )
     .await;
 
@@ -85,6 +86,7 @@ async fn test_create_and_get_card() {
         "GET",
         &format!("/api/cards/{}", card_id),
         None,
+        Some(&token),
     )
     .await;
 
@@ -96,7 +98,7 @@ async fn test_create_and_get_card() {
 
 #[tokio::test]
 async fn test_move_card_between_stages() {
-    let pool = common::setup_test_db().await;
+    let (pool, token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let http_client = reqwest::Client::new();
     
@@ -128,6 +130,7 @@ async fn test_move_card_between_stages() {
         "POST",
         "/api/cards",
         Some(create_body),
+        Some(&token),
     )
     .await;
 
@@ -145,6 +148,7 @@ async fn test_move_card_between_stages() {
         "PATCH",
         &format!("/api/cards/{}/move", card_id),
         Some(move_body),
+        Some(&token),
     )
     .await;
 
@@ -156,7 +160,7 @@ async fn test_move_card_between_stages() {
 
 #[tokio::test]
 async fn test_invalid_stage_transition() {
-    let pool = common::setup_test_db().await;
+    let (pool, token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let http_client = reqwest::Client::new();
     
@@ -187,6 +191,7 @@ async fn test_invalid_stage_transition() {
         "POST",
         "/api/cards",
         Some(create_body),
+        Some(&token),
     )
     .await;
 
@@ -204,6 +209,7 @@ async fn test_invalid_stage_transition() {
         "PATCH",
         &format!("/api/cards/{}/move", card_id),
         Some(move_body),
+        Some(&token),
     )
     .await;
 
@@ -212,7 +218,7 @@ async fn test_invalid_stage_transition() {
 
 #[tokio::test]
 async fn test_delete_card() {
-    let pool = common::setup_test_db().await;
+    let (pool, token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let http_client = reqwest::Client::new();
     
@@ -243,6 +249,7 @@ async fn test_delete_card() {
         "POST",
         "/api/cards",
         Some(create_body),
+        Some(&token),
     )
     .await;
 
@@ -254,6 +261,7 @@ async fn test_delete_card() {
         "DELETE",
         &format!("/api/cards/{}", card_id),
         None,
+        Some(&token),
     )
     .await;
 
@@ -264,6 +272,7 @@ async fn test_delete_card() {
         "GET",
         &format!("/api/cards/{}", card_id),
         None,
+        Some(&token),
     )
     .await;
 
@@ -272,7 +281,7 @@ async fn test_delete_card() {
 
 #[tokio::test]
 async fn test_get_board() {
-    let pool = common::setup_test_db().await;
+    let (pool, token) = common::setup_test_db().await;
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let http_client = reqwest::Client::new();
     
@@ -293,7 +302,7 @@ async fn test_get_board() {
 
     let app = kanban_backend::api::routes::create_router(state, &config);
 
-    let (status, body) = common::make_request(app, "GET", "/api/board", None).await;
+    let (status, body) = common::make_request(app, "GET", "/api/board", None, Some(&token)).await;
 
     assert_eq!(status, StatusCode::OK);
     let board: serde_json::Value = serde_json::from_str(&body).unwrap();

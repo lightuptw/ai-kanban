@@ -360,14 +360,17 @@ Board ID: {board_id}
         let elapsed = (chrono::Utc::now() - started_at).num_seconds().max(0) as u64;
         let now = chrono::Utc::now().to_rfc3339();
 
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE board_settings SET auto_detect_status = ?, updated_at = ? WHERE board_id = ?",
         )
         .bind(&status)
         .bind(&now)
         .bind(&board_id_clone)
         .execute(&db_clone)
-        .await;
+        .await
+        {
+            tracing::warn!(error = %e, board_id = board_id_clone.as_str(), "Failed to persist auto-detect status update");
+        }
 
         let event = SseEvent::AutoDetectStatus {
             board_id: board_id_clone,

@@ -3,74 +3,55 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
+use uuid::Uuid;
 
-pub async fn setup_test_db() -> SqlitePool {
+pub async fn setup_test_db() -> (SqlitePool, String) {
     let pool = SqlitePool::connect("sqlite::memory:")
         .await
         .expect("Failed to create test database");
 
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run test migrations");
+
+    let user_id = Uuid::new_v4().to_string();
+    let tenant_id = Uuid::new_v4().to_string();
+    let password_hash = kanban_backend::auth::password::hash_password("TestPass123")
+        .expect("Failed to hash test password");
+    let now = chrono::Utc::now().to_rfc3339();
+
     sqlx::query(
-        r#"
-        CREATE TABLE cards (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            stage TEXT NOT NULL DEFAULT 'backlog',
-            position INTEGER NOT NULL DEFAULT 0,
-            priority TEXT NOT NULL DEFAULT 'medium',
-            working_directory TEXT NOT NULL DEFAULT '.',
-            plan_path TEXT,
-            ai_session_id TEXT,
-            ai_status TEXT NOT NULL DEFAULT 'idle',
-            ai_progress TEXT NOT NULL DEFAULT '{}',
-            linked_documents TEXT NOT NULL DEFAULT '[]',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
+        "INSERT INTO users (id, tenant_id, username, nickname, first_name, last_name, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&user_id)
+    .bind(&tenant_id)
+    .bind("test_user")
+    .bind("Test User")
+    .bind("")
+    .bind("")
+    .bind("")
+    .bind(&password_hash)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to seed test user");
 
-        CREATE TABLE subtasks (
-            id TEXT PRIMARY KEY,
-            card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            completed INTEGER NOT NULL DEFAULT 0,
-            position INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
+    let signing_key = kanban_backend::auth::jwt::get_or_create_signing_key(&pool)
+        .await
+        .expect("Failed to create JWT signing key");
+    let token = kanban_backend::auth::jwt::create_token(&signing_key, &user_id, &tenant_id)
+        .expect("Failed to create JWT token");
 
-        CREATE TABLE labels (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            color TEXT NOT NULL
-        );
-
-        CREATE TABLE card_labels (
-            card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-            label_id TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
-            PRIMARY KEY (card_id, label_id)
-        );
-
-        CREATE TABLE comments (
-            id TEXT PRIMARY KEY,
-            card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-            author TEXT NOT NULL DEFAULT 'user',
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-
-        INSERT INTO labels (id, name, color) VALUES
-            ('lbl-bug', 'Bug', '#f44336'),
-            ('lbl-feature', 'Feature', '#4caf50'),
-            ('lbl-improvement', 'Improvement', '#2196f3'),
-            ('lbl-docs', 'Documentation', '#ff9800'),
-            ('lbl-urgent', 'Urgent', '#e91e63');
-        "#,
+    sqlx::query(
+        "INSERT OR IGNORE INTO boards (id, name, created_at, updated_at) VALUES ('default', 'Test Board', datetime('now'), datetime('now'))",
     )
     .execute(&pool)
     .await
-    .expect("Failed to create test schema");
+    .expect("Failed to ensure default board");
 
-    pool
+    (pool, token)
 }
 
 pub async fn make_request(
@@ -78,6 +59,7 @@ pub async fn make_request(
     method: &str,
     uri: &str,
     body: Option<String>,
+    auth_token: Option<&str>,
 ) -> (StatusCode, String) {
     let mut request = Request::builder().uri(uri).method(method);
 
@@ -85,16 +67,23 @@ pub async fn make_request(
         request = request.header("content-type", "application/json");
     }
 
+    if let Some(token) = auth_token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
     let request = request
         .body(Body::from(body.unwrap_or_default()))
-        .unwrap();
+        .expect("Failed to build test request");
 
-    let response = app.oneshot(request).await.unwrap();
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("Test request failed unexpectedly");
     let status = response.status();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
-        .unwrap();
-    let body_str = String::from_utf8(body.to_vec()).unwrap();
+        .expect("Failed to read response body");
+    let body_str = String::from_utf8(body.to_vec()).expect("Response body is not valid UTF-8");
 
     (status, body_str)
 }
