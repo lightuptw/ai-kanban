@@ -14,6 +14,7 @@ import Sidebar from "../components/sidebar/Sidebar";
 import Footer from "../components/Footer";
 import Settings from "../components/Settings";
 import NotificationSnackbar from "../components/NotificationSnackbar";
+import UserStatusWidget from "../components/UserStatusWidget";
 import { requestNotificationPermission } from "../utils/browserNotifications";
 
 const drawerWidth = 258;
@@ -59,6 +60,7 @@ interface DashboardType {
 const Dashboard: React.FC<DashboardType> = ({ children }) => {
   const router = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -105,6 +107,7 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
         <Footer />
       </AppContent>
       <Settings />
+      <UserStatusWidget onClick={() => setProfileOpen(true)} />
       <NotificationSnackbar />
     </Root>
   );
