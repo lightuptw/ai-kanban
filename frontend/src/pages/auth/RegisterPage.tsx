@@ -76,6 +76,7 @@ const RegisterPage: React.FC = () => {
         last_name: form.last_name.trim() || undefined,
         email: form.email.trim() || undefined,
       });
+      window.dispatchEvent(new Event("auth:login"));
       navigate("/");
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : "Registration failed";
