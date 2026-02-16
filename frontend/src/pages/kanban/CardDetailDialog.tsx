@@ -69,6 +69,7 @@ import { DiffViewer } from "./DiffViewer";
 import { api } from "../../services/api";
 import { STAGE_COLORS } from "../../constants/stageColors";
 import { API_BASE_URL } from "../../constants";
+import UserAvatar from "../../components/UserAvatar";
 
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem("token");
@@ -1347,9 +1348,16 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
               {comments.map((comment) => (
                 <ListItem key={comment.id} sx={{ flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', mb: 0.5 }}>
-                    <Typography variant="caption" fontWeight={600}>
-                      {comment.author}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <UserAvatar
+                        userId={comment.user_id}
+                        nickname={comment.author}
+                        size={28}
+                      />
+                      <Typography variant="caption" fontWeight={600}>
+                        {comment.author}
+                      </Typography>
+                    </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                       <Typography variant="caption" color="text.secondary">
                         {new Date(comment.created_at).toLocaleString()}

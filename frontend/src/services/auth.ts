@@ -1,5 +1,9 @@
 import { API_BASE_URL } from "../constants";
 
+export function avatarUrl(userId: string): string {
+  return `${API_BASE_URL}/api/auth/avatar/${userId}`;
+}
+
 const TOKEN_KEY = "token";
 const REFRESH_TOKEN_KEY = "refresh_token";
 const AUTH_USER_KEY = "auth_user";
@@ -12,6 +16,7 @@ export type AuthUser = {
   last_name: string;
   email: string;
   tenant_id: string;
+  has_avatar: boolean;
 };
 
 export type AuthResponse = {
@@ -120,6 +125,48 @@ export function logout() {
   window.location.href = "/login";
 }
 
+export async function uploadAvatar(file: File): Promise<AuthUser> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+
+  const formData = new FormData();
+  formData.append("avatar", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/auth/avatar`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || `HTTP ${response.status}`);
+  }
+
+  const user: AuthUser = await response.json();
+  setUser(user);
+  return user;
+}
+
+export async function deleteAvatar(): Promise<void> {
+  const token = getToken();
+  if (!token) throw new Error("Not authenticated");
+
+  const response = await fetch(`${API_BASE_URL}/api/auth/avatar`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const currentUser = getUser();
+  if (currentUser) {
+    setUser({ ...currentUser, has_avatar: false });
+  }
+}
+
 export const authService = {
   login,
   register,
@@ -130,4 +177,7 @@ export const authService = {
   isAuthenticated,
   setTokens,
   setUser,
+  avatarUrl,
+  uploadAvatar,
+  deleteAvatar,
 };

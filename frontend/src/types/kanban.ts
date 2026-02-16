@@ -21,6 +21,7 @@ export interface Comment {
   card_id: string;
   author: string;
   content: string;
+  user_id?: string;
   created_at: string;
 }
 
@@ -206,4 +207,20 @@ export interface UpdateBoardSettingsRequest {
   testing_requirements?: string;
   api_conventions?: string;
   infrastructure?: string;
+}
+
+export type ConflictType = "both-modified" | "deleted-by-us" | "deleted-by-them" | "added-by-both";
+
+export interface ConflictFile {
+  path: string;
+  ours_content: string | null;
+  theirs_content: string | null;
+  base_content: string | null;
+  conflict_type: ConflictType;
+  is_binary: boolean;
+}
+
+export interface ConflictDetail {
+  files: ConflictFile[];
+  merge_in_progress: boolean;
 }
