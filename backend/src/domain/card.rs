@@ -73,6 +73,16 @@ pub struct CardVersion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SessionMapping {
+    pub child_session_id: String,
+    pub card_id: String,
+    pub parent_session_id: String,
+    pub agent_type: Option<String>,
+    pub description: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AiQuestion {
     pub id: String,
     pub card_id: String,

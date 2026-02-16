@@ -103,6 +103,7 @@ impl SseRelayService {
     /// opencode events nest session ID in different locations:
     /// - `properties.sessionID` (session.status, session.idle, session.diff)
     /// - `properties.info.sessionID` (message.updated, session.updated)
+    /// - `properties.info.id` (session.created, session.deleted)
     /// - `properties.part.sessionID` (message.part.updated, message.part.delta)
     fn extract_session_id(properties: &Value) -> Option<&str> {
         properties
@@ -111,7 +112,10 @@ impl SseRelayService {
             .or_else(|| {
                 properties
                     .get("info")
-                    .and_then(|info| info.get("sessionID"))
+                    .and_then(|info| {
+                        info.get("sessionID")
+                            .or_else(|| info.get("id"))
+                    })
                     .and_then(Value::as_str)
             })
             .or_else(|| {
@@ -132,9 +136,77 @@ impl SseRelayService {
             .fetch_optional(&self.db)
             .await?;
 
-        let Some(card) = card else {
-            tracing::debug!(session_id, "Ignoring OpenCode event for unknown session");
-            return Ok(());
+        // If no card matches directly, try session_mappings table for sub-agent sessions
+        let (card, is_subagent) = if let Some(card) = card {
+            (card, false)
+        } else {
+            let mapping: Option<(String,)> = sqlx::query_as(
+                "SELECT card_id FROM session_mappings WHERE child_session_id = ?",
+            )
+            .bind(session_id)
+            .fetch_optional(&self.db)
+            .await
+            .unwrap_or(None);
+
+            if let Some((card_id,)) = mapping {
+                let mapped_card: Option<Card> =
+                    sqlx::query_as("SELECT * FROM cards WHERE id = ?")
+                        .bind(&card_id)
+                        .fetch_optional(&self.db)
+                        .await?;
+                match mapped_card {
+                    Some(c) => (c, true),
+                    None => {
+                        tracing::warn!(
+                            session_id,
+                            card_id,
+                            "Session mapping references deleted card"
+                        );
+                        return Ok(());
+                    }
+                }
+            } else {
+                // Unknown session — attempt auto-detection for sub-agent correlation
+                let agent_name = properties
+                    .get("info")
+                    .and_then(|info| info.get("agent"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+
+                tracing::info!(
+                    session_id,
+                    event_type,
+                    agent = agent_name,
+                    "Unmatched OpenCode event — attempting sub-agent auto-detection"
+                );
+
+                if let Some(card) =
+                    self.try_auto_detect_subagent(session_id, event_type, properties).await?
+                {
+                    (card, true)
+                } else {
+                    tracing::debug!(
+                        session_id,
+                        event_type,
+                        agent = agent_name,
+                        "Could not correlate event to any card"
+                    );
+                    return Ok(());
+                }
+            }
+        };
+
+        let subagent_agent_type = if is_subagent {
+            let agent_type: Option<(Option<String>,)> = sqlx::query_as(
+                "SELECT agent_type FROM session_mappings WHERE child_session_id = ?",
+            )
+            .bind(session_id)
+            .fetch_optional(&self.db)
+            .await
+            .unwrap_or(None);
+            agent_type.and_then(|(t,)| t)
+        } else {
+            None
         };
 
         let should_log = match event_type {
@@ -151,7 +223,14 @@ impl SseRelayService {
 
         if should_log {
             let log = self
-                .create_agent_log(&card, session_id, event_type, properties)
+                .create_agent_log(
+                    &card,
+                    session_id,
+                    event_type,
+                    properties,
+                    is_subagent,
+                    subagent_agent_type.as_deref(),
+                )
                 .await?;
             let log_event = WsEvent::AgentLogCreated {
                 card_id: card.id.clone(),
@@ -160,6 +239,10 @@ impl SseRelayService {
             if let Ok(payload) = serde_json::to_string(&log_event) {
                 let _ = self.sse_tx.send(payload);
             }
+        }
+
+        if is_subagent {
+            return Ok(());
         }
 
         let now = Utc::now().to_rfc3339();
@@ -334,11 +417,154 @@ impl SseRelayService {
         Ok(())
     }
 
-    /// Extract event type and properties from opencode SSE data.
-    ///
-    /// opencode SSE format:
-    /// - SSE `event:` field is NOT set (defaults to "message")
-    /// - SSE `data:` field contains JSON: `{"type": "session.status", "properties": {...}}`
+    /// When an event arrives from an unknown session, check if it was created
+    /// as a child of a known parent session. OpenCode emits `session.created`
+    /// with `properties.info.parentID` linking sub-agents to their parent.
+    async fn try_auto_detect_subagent(
+        &self,
+        child_session_id: &str,
+        event_type: &str,
+        properties: &Value,
+    ) -> Result<Option<Card>> {
+        let parent_id = properties
+            .get("info")
+            .and_then(|info| info.get("parentID"))
+            .and_then(Value::as_str);
+
+        if let Some(parent_session_id) = parent_id {
+            let card: Option<Card> =
+                sqlx::query_as("SELECT * FROM cards WHERE ai_session_id = ?")
+                    .bind(parent_session_id)
+                    .fetch_optional(&self.db)
+                    .await?;
+
+            if let Some(card) = card {
+                let agent_type = properties
+                    .get("info")
+                    .and_then(|info| info.get("title"))
+                    .and_then(Value::as_str)
+                    .and_then(|title| {
+                        title
+                            .split('@')
+                            .nth(1)
+                            .and_then(|s| s.split_whitespace().next())
+                    });
+
+                let description = properties
+                    .get("info")
+                    .and_then(|info| info.get("title"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+
+                tracing::info!(
+                    child_session_id,
+                    parent_session_id,
+                    card_id = card.id,
+                    agent_type = agent_type.unwrap_or("unknown"),
+                    "Auto-detected sub-agent session via parentID"
+                );
+
+                let _ = super::SessionMappingService::insert(
+                    &self.db,
+                    child_session_id,
+                    &card.id,
+                    parent_session_id,
+                    agent_type,
+                    description,
+                )
+                .await;
+
+                return Ok(Some(card));
+            }
+
+            let parent_mapping: Option<(String,)> = sqlx::query_as(
+                "SELECT card_id FROM session_mappings WHERE child_session_id = ?",
+            )
+            .bind(parent_session_id)
+            .fetch_optional(&self.db)
+            .await
+            .unwrap_or(None);
+
+            if let Some((card_id,)) = parent_mapping {
+                let card: Option<Card> =
+                    sqlx::query_as("SELECT * FROM cards WHERE id = ?")
+                        .bind(&card_id)
+                        .fetch_optional(&self.db)
+                        .await?;
+
+                if let Some(card) = card {
+                    let agent_type = properties
+                        .get("info")
+                        .and_then(|info| info.get("title"))
+                        .and_then(Value::as_str)
+                        .and_then(|title| {
+                            title
+                                .split('@')
+                                .nth(1)
+                                .and_then(|s| s.split_whitespace().next())
+                        });
+
+                    let description = properties
+                        .get("info")
+                        .and_then(|info| info.get("title"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+
+                    let _ = super::SessionMappingService::insert(
+                        &self.db,
+                        child_session_id,
+                        &card.id,
+                        parent_session_id,
+                        agent_type,
+                        description,
+                    )
+                    .await;
+
+                    return Ok(Some(card));
+                }
+            }
+        }
+
+        if event_type != "session.created" {
+            let active_cards: Vec<Card> = sqlx::query_as(
+                "SELECT * FROM cards WHERE ai_status IN ('working', 'dispatched') AND ai_session_id IS NOT NULL",
+            )
+            .fetch_all(&self.db)
+            .await?;
+
+            if active_cards.len() == 1 {
+                let card = active_cards.into_iter().next().unwrap();
+                let parent_session_id = card.ai_session_id.as_deref().unwrap_or("");
+
+                let agent_name = properties
+                    .get("info")
+                    .and_then(|info| info.get("agent"))
+                    .and_then(Value::as_str);
+
+                tracing::info!(
+                    child_session_id,
+                    card_id = card.id,
+                    agent = agent_name.unwrap_or("unknown"),
+                    "Auto-detected sub-agent via single active card heuristic"
+                );
+
+                let _ = super::SessionMappingService::insert(
+                    &self.db,
+                    child_session_id,
+                    &card.id,
+                    parent_session_id,
+                    agent_name,
+                    "",
+                )
+                .await;
+
+                return Ok(Some(card));
+            }
+        }
+
+        Ok(None)
+    }
+
     fn extract_event_type_and_payload(_raw_event: &str, raw_data: &str) -> Option<(String, Value)> {
         let parsed_data: Value = serde_json::from_str(raw_data).ok()?;
 
@@ -361,16 +587,32 @@ impl SseRelayService {
         session_id: &str,
         event_type: &str,
         properties: &Value,
+        is_subagent: bool,
+        subagent_type: Option<&str>,
     ) -> Result<AgentLog> {
         let id = Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
-        let agent = properties
-            .get("info")
-            .and_then(|info| info.get("agent"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let content = Self::build_log_content(event_type, properties, agent.as_deref());
-        let metadata = properties.to_string();
+        let agent = subagent_type
+            .map(str::to_owned)
+            .or_else(|| {
+                properties
+                    .get("info")
+                    .and_then(|info| info.get("agent"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        let content =
+            Self::build_log_content(event_type, properties, agent.as_deref(), is_subagent);
+        let metadata = if is_subagent {
+            let mut meta = properties.clone();
+            meta["_subagent"] = json!(true);
+            if let Some(at) = subagent_type {
+                meta["_agent_type"] = json!(at);
+            }
+            meta.to_string()
+        } else {
+            properties.to_string()
+        };
 
         sqlx::query(
             "INSERT INTO agent_logs (id, card_id, session_id, event_type, agent, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -398,13 +640,34 @@ impl SseRelayService {
         })
     }
 
-    fn build_log_content(event_type: &str, properties: &Value, agent: Option<&str>) -> String {
-        match event_type {
-            "message.part.delta" => properties
-                .get("delta")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+    fn build_log_content(
+        event_type: &str,
+        properties: &Value,
+        agent: Option<&str>,
+        is_subagent: bool,
+    ) -> String {
+        let prefix = if is_subagent {
+            format!("↳ {} | ", agent.unwrap_or("sub-agent"))
+        } else {
+            String::new()
+        };
+
+        let body = match event_type {
+            "message.part.delta" => {
+                return properties
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            "session.created" if is_subagent => {
+                let title = properties
+                    .get("info")
+                    .and_then(|info| info.get("title"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("sub-agent");
+                format!("Spawned: {}", title)
+            }
             "message.updated" => {
                 let finish = properties
                     .get("info")
@@ -426,12 +689,24 @@ impl SseRelayService {
                     .and_then(|s| s.get("type"))
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                format!("Session {}", status_type)
+                if is_subagent {
+                    format!("Sub-agent {}", status_type)
+                } else {
+                    format!("Session {}", status_type)
+                }
             }
-            "session.idle" => "Session completed".to_string(),
+            "session.idle" => {
+                if is_subagent {
+                    "Sub-agent completed".to_string()
+                } else {
+                    "Session completed".to_string()
+                }
+            }
             "todo.updated" => Self::summarize_todos(properties),
             _ => format!("Event {}", event_type),
-        }
+        };
+
+        format!("{}{}", prefix, body)
     }
 
     fn summarize_todos(properties: &Value) -> String {
