@@ -17,6 +17,8 @@ export type AuthUser = {
   email: string;
   tenant_id: string;
   has_avatar: boolean;
+  avatar_url: string | null;
+  profile_completed: boolean;
 };
 
 export type AuthResponse = {

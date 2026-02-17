@@ -86,6 +86,44 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit, isRetry = fa
   return response.json();
 }
 
+async function fetchMultipart<T>(endpoint: string, formData: FormData, isRetry = false): Promise<T> {
+  const token = localStorage.getItem("token");
+  const headers: Record<string, string> = {};
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (response.status === 401 && !isRetry && token) {
+    try {
+      const { authService } = await import("./auth");
+      const newToken = await authService.refresh();
+
+      if (newToken) {
+        headers.Authorization = `Bearer ${newToken}`;
+        return fetchMultipart<T>(endpoint, formData, true);
+      }
+    } catch {
+      const { authService } = await import("./auth");
+      authService.logout();
+      throw new Error("Unauthorized");
+    }
+  }
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export const api = {
   getBoard: (boardId?: string) =>
     fetchAPI<BoardResponse>(boardId ? `/api/board?board_id=${boardId}` : "/api/board"),
@@ -297,4 +335,26 @@ export const api = {
     fetchAPI<void>(`/api/notifications/${id}`, {
       method: "DELETE",
     }),
+
+  getMe: () => fetchAPI<import("./auth").AuthUser>("/api/auth/me"),
+
+  updateProfile: (data: { nickname?: string; first_name?: string; last_name?: string; email?: string }) =>
+    fetchAPI<import("./auth").AuthUser>("/api/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    fetchAPI<{ message: string }>("/api/auth/me/password", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  uploadAvatar: (file: File) => {
+    const formData = new FormData();
+    formData.append("avatar", file);
+    return fetchMultipart<import("./auth").AuthUser>("/api/auth/me/avatar", formData);
+  },
+
+  getAvatarUrl: (userId: string) => `${API_BASE_URL}/api/users/${userId}/avatar`,
 };

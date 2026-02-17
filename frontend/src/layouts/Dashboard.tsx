@@ -14,7 +14,10 @@ import Sidebar from "../components/sidebar/Sidebar";
 import Footer from "../components/Footer";
 import Settings from "../components/Settings";
 import NotificationSnackbar from "../components/NotificationSnackbar";
+import UserStatusWidget from "../components/UserStatusWidget";
+import UserProfileDialog from "../components/UserProfileDialog";
 import { requestNotificationPermission } from "../utils/browserNotifications";
+import { useAuth } from "../hooks/useAuth";
 
 const drawerWidth = 258;
 
@@ -59,6 +62,9 @@ interface DashboardType {
 const Dashboard: React.FC<DashboardType> = ({ children }) => {
   const router = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [onboardingMode, setOnboardingMode] = useState(false);
+  const { user } = useAuth();
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -71,6 +77,14 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
   useEffect(() => {
     requestNotificationPermission();
   }, []);
+
+  // Auto-open profile dialog in onboarding mode for new users
+  useEffect(() => {
+    if (user && user.profile_completed === false && !profileOpen) {
+      setOnboardingMode(true);
+      setProfileOpen(true);
+    }
+  }, [user, profileOpen]);
 
   const theme = useTheme();
   const isLgUp = useMediaQuery(theme.breakpoints.up("lg"));
@@ -105,6 +119,12 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
         <Footer />
       </AppContent>
       <Settings />
+      <UserStatusWidget onClick={() => { setOnboardingMode(false); setProfileOpen(true); }} />
+      <UserProfileDialog
+        open={profileOpen}
+        onClose={() => { setProfileOpen(false); setOnboardingMode(false); }}
+        onboardingMode={onboardingMode}
+      />
       <NotificationSnackbar />
     </Root>
   );

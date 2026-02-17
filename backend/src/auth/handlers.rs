@@ -1,6 +1,7 @@
 use axum::{
     extract::{Extension, Multipart, Path, State},
     http::{header, HeaderMap, StatusCode},
+    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,20 @@ pub struct RefreshRequest {
     pub refresh_token: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub nickname: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
     pub token: String,
@@ -49,6 +64,8 @@ pub struct UserResponse {
     pub email: String,
     pub tenant_id: String,
     pub has_avatar: bool,
+    pub avatar_url: Option<String>,
+    pub profile_completed: bool,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -65,16 +82,7 @@ struct UserRow {
 
 impl From<UserRow> for UserResponse {
     fn from(row: UserRow) -> Self {
-        Self {
-            id: row.id,
-            username: row.username,
-            nickname: row.nickname,
-            first_name: row.first_name,
-            last_name: row.last_name,
-            email: row.email,
-            tenant_id: row.tenant_id,
-            has_avatar: row.has_avatar,
-        }
+        build_user_response(row)
     }
 }
 
@@ -95,6 +103,40 @@ struct UserWithPassword {
 struct RefreshTokenRow {
     pub id: String,
     pub user_id: String,
+}
+
+fn build_user_response(row: UserRow) -> UserResponse {
+    let profile_completed = !row.nickname.is_empty() && (!row.email.is_empty() || !row.first_name.is_empty());
+    let avatar_url = if row.has_avatar {
+        Some(format!("/api/auth/avatar/{}", row.username))
+    } else {
+        None
+    };
+
+    UserResponse {
+        id: row.id,
+        username: row.username,
+        nickname: row.nickname,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        email: row.email,
+        tenant_id: row.tenant_id,
+        has_avatar: row.has_avatar,
+        avatar_url,
+        profile_completed,
+    }
+}
+
+async fn fetch_user_row_by_id(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, username, nickname, first_name, last_name, email, tenant_id, (avatar IS NOT NULL AND length(avatar) > 0) as has_avatar FROM users WHERE id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
 }
 
 async fn issue_tokens(
@@ -192,7 +234,7 @@ pub async fn register(
     Ok(Json(AuthResponse {
         token,
         refresh_token,
-        user: UserResponse {
+        user: build_user_response(UserRow {
             id: user_id,
             username,
             nickname,
@@ -201,7 +243,7 @@ pub async fn register(
             email,
             tenant_id,
             has_avatar: false,
-        },
+        }),
     }))
 }
 
@@ -231,21 +273,33 @@ pub async fn login(
         ));
     }
 
-    let (token, refresh_token) = issue_tokens(db, &user.id, &user.tenant_id).await?;
+    let user_id = user.id.clone();
+    let tenant_id = user.tenant_id.clone();
+    let has_avatar: bool = sqlx::query_scalar(
+        "SELECT (avatar IS NOT NULL AND length(avatar) > 0) as has_avatar FROM users WHERE id = ?",
+    )
+    .bind(&user_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| KanbanError::Unauthorized("Invalid username or password".into()))?;
+
+    let user_response = build_user_response(UserRow {
+        id: user_id.clone(),
+        username: user.username,
+        nickname: user.nickname,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        tenant_id: tenant_id.clone(),
+        has_avatar,
+    });
+
+    let (token, refresh_token) = issue_tokens(db, &user_id, &tenant_id).await?;
 
     Ok(Json(AuthResponse {
         token,
         refresh_token,
-        user: UserResponse {
-            id: user.id,
-            username: user.username,
-            nickname: user.nickname,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            email: user.email,
-            tenant_id: user.tenant_id,
-            has_avatar: user.has_avatar,
-        },
+        user: user_response,
     }))
 }
 
@@ -271,20 +325,17 @@ pub async fn refresh(
         .execute(db)
         .await?;
 
-    let user: UserRow = sqlx::query_as(
-        "SELECT id, username, nickname, first_name, last_name, email, tenant_id, (avatar IS NOT NULL) as has_avatar FROM users WHERE id = ?",
-    )
-    .bind(&refresh_token.user_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| KanbanError::Unauthorized("Invalid refresh token".into()))?;
+    let user = fetch_user_row_by_id(db, &refresh_token.user_id)
+        .await?
+        .map(build_user_response)
+        .ok_or_else(|| KanbanError::Unauthorized("Invalid refresh token".into()))?;
 
     let (token, refresh_token) = issue_tokens(db, &user.id, &user.tenant_id).await?;
 
     Ok(Json(AuthResponse {
         token,
         refresh_token,
-        user: user.into(),
+        user,
     }))
 }
 
@@ -294,15 +345,12 @@ pub async fn me(
 ) -> Result<Json<UserResponse>, KanbanError> {
     let db = state.require_db()?;
 
-    let user: UserRow = sqlx::query_as(
-        "SELECT id, username, nickname, first_name, last_name, email, tenant_id, (avatar IS NOT NULL) as has_avatar FROM users WHERE id = ?",
-    )
-    .bind(&auth_user.user_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
+    let user = fetch_user_row_by_id(db, &auth_user.user_id)
+        .await?
+        .map(build_user_response)
+        .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
 
-    Ok(Json(user.into()))
+    Ok(Json(user))
 }
 
 const MAX_AVATAR_SIZE: usize = 2 * 1024 * 1024;
@@ -426,4 +474,126 @@ pub async fn delete_avatar(
     .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn update_profile(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthUser>,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<Json<UserResponse>, KanbanError> {
+    let nickname = req.nickname.map(|value| value.trim().to_string());
+    if let Some(ref value) = nickname {
+        if value.is_empty() {
+            return Err(KanbanError::BadRequest("Nickname cannot be empty".into()));
+        }
+    }
+
+    let first_name = req.first_name.map(|value| value.trim().to_string());
+    let last_name = req.last_name.map(|value| value.trim().to_string());
+    let email = req.email.map(|value| value.trim().to_string());
+    if let Some(ref value) = email {
+        if !value.is_empty() && !value.contains('@') {
+            return Err(KanbanError::BadRequest("Email must contain '@'".into()));
+        }
+    }
+
+    let db = state.require_db()?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let result = sqlx::query(
+        "UPDATE users SET nickname = COALESCE(?, nickname), first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), email = COALESCE(?, email), updated_at = ? WHERE id = ?",
+    )
+    .bind(nickname)
+    .bind(first_name)
+    .bind(last_name)
+    .bind(email)
+    .bind(now)
+    .bind(&auth_user.user_id)
+    .execute(db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(KanbanError::NotFound("User not found".into()));
+    }
+
+    let user = fetch_user_row_by_id(db, &auth_user.user_id)
+        .await?
+        .map(build_user_response)
+        .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
+
+    Ok(Json(user))
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthUser>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<serde_json::Value>, KanbanError> {
+    if req.new_password.len() < 8 {
+        return Err(KanbanError::BadRequest(
+            "Password must be at least 8 characters".into(),
+        ));
+    }
+
+    let db = state.require_db()?;
+    let password_hash: Option<(String,)> =
+        sqlx::query_as("SELECT password_hash FROM users WHERE id = ?")
+            .bind(&auth_user.user_id)
+            .fetch_optional(db)
+            .await?;
+
+    let current_hash = password_hash
+        .map(|(hash,)| hash)
+        .ok_or_else(|| KanbanError::NotFound("User not found".into()))?;
+
+    let valid = password::verify_password(&req.current_password, &current_hash)
+        .map_err(|e| KanbanError::Internal(format!("Failed to verify password: {}", e)))?;
+    if !valid {
+        return Err(KanbanError::Unauthorized("Current password is incorrect".into()));
+    }
+
+    let new_hash = password::hash_password(&req.new_password)
+        .map_err(|e| KanbanError::Internal(format!("Failed to hash password: {}", e)))?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let result = sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+        .bind(new_hash)
+        .bind(now)
+        .bind(&auth_user.user_id)
+        .execute(db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(KanbanError::NotFound("User not found".into()));
+    }
+
+    Ok(Json(serde_json::json!({
+        "message": "Password changed successfully"
+    })))
+}
+
+pub async fn get_user_avatar(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> Result<impl IntoResponse, KanbanError> {
+    let db = state.require_db()?;
+
+    let avatar_row: Option<(Option<Vec<u8>>,)> = sqlx::query_as("SELECT avatar FROM users WHERE id = ?")
+        .bind(&user_id)
+        .fetch_optional(db)
+        .await?;
+
+    let avatar_data = match avatar_row {
+        Some((Some(data),)) if !data.is_empty() => data,
+        _ => return Err(KanbanError::NotFound("Avatar not found".into())),
+    };
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        avatar_data,
+    ))
 }

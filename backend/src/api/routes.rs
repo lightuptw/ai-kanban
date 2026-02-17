@@ -123,6 +123,10 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             "/api/cards/{id}/questions",
             get(handlers::questions::get_questions).post(handlers::questions::create_question),
         )
+        .route(
+            "/api/users/{id}/avatar",
+            get(auth::handlers::get_user_avatar),
+        )
         .route("/api/auth/register", post(auth::handlers::register))
         .route("/api/auth/login", post(auth::handlers::login))
         .route("/api/auth/refresh", post(auth::handlers::refresh))
@@ -137,11 +141,19 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             post(handlers::picker::pick_directory),
         )
         .route("/api/pick-files", post(handlers::picker::pick_files))
-        .route("/api/auth/me", get(auth::handlers::me))
+        .route(
+            "/api/auth/me",
+            get(auth::handlers::me).patch(auth::handlers::update_profile),
+        )
+        .route(
+            "/api/auth/me/password",
+            patch(auth::handlers::change_password),
+        )
         .route(
             "/api/auth/avatar",
             post(auth::handlers::upload_avatar).delete(auth::handlers::delete_avatar),
         )
+        .route("/api/auth/me/avatar", post(auth::handlers::upload_avatar))
         .route("/ws/events", get(handlers::ws::ws_events_handler))
         .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))
         .route("/api/board", get(handlers::cards::get_board))
