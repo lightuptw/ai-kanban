@@ -315,7 +315,12 @@ const kanbanSlice = createSlice({
       .addCase(createCard.fulfilled, (state, action: PayloadAction<Card>) => {
         const card = action.payload;
         const stage = card.stage as Stage;
-        state.columns[stage].push(card);
+        const existing = state.columns[stage].findIndex((c) => c.id === card.id);
+        if (existing !== -1) {
+          state.columns[stage][existing] = card;
+        } else {
+          state.columns[stage].push(card);
+        }
         state.columns[stage].sort((a, b) => a.position - b.position);
       })
       .addCase(updateCard.fulfilled, (state, action: PayloadAction<Card>) => {
@@ -355,7 +360,14 @@ const kanbanSlice = createSlice({
         state.boardsLoading = false;
       })
       .addCase(createBoard.fulfilled, (state, action: PayloadAction<Board>) => {
-        state.boards.unshift(action.payload);
+        // Deduplicate: SSE boardCreated may arrive before the HTTP response,
+        // so the board could already exist in state via updateBoardFromSSE.
+        const existing = state.boards.findIndex((b) => b.id === action.payload.id);
+        if (existing !== -1) {
+          state.boards[existing] = action.payload;
+        } else {
+          state.boards.unshift(action.payload);
+        }
       })
       .addCase(updateBoard.fulfilled, (state, action: PayloadAction<Board>) => {
         const idx = state.boards.findIndex((b) => b.id === action.payload.id);
