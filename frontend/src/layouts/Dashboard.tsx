@@ -14,7 +14,6 @@ import Sidebar from "../components/sidebar/Sidebar";
 import Footer from "../components/Footer";
 import Settings from "../components/Settings";
 import NotificationSnackbar from "../components/NotificationSnackbar";
-import UserStatusWidget from "../components/UserStatusWidget";
 import UserProfileDialog from "../components/UserProfileDialog";
 import { requestNotificationPermission } from "../utils/browserNotifications";
 import { useAuth } from "../hooks/useAuth";
@@ -101,12 +100,14 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
             open={mobileOpen}
             onClose={handleDrawerToggle}
             items={dashboardItems}
+            onProfileClick={() => { setOnboardingMode(false); setProfileOpen(true); }}
           />
         </Box>
         <Box sx={{ display: { xs: "none", md: "block" } }}>
           <Sidebar
             PaperProps={{ style: { width: drawerWidth } }}
             items={dashboardItems}
+            onProfileClick={() => { setOnboardingMode(false); setProfileOpen(true); }}
           />
         </Box>
       </Drawer>
@@ -119,7 +120,6 @@ const Dashboard: React.FC<DashboardType> = ({ children }) => {
         <Footer />
       </AppContent>
       <Settings />
-      <UserStatusWidget onClick={() => { setOnboardingMode(false); setProfileOpen(true); }} />
       <UserProfileDialog
         open={profileOpen}
         onClose={() => { setProfileOpen(false); setOnboardingMode(false); }}

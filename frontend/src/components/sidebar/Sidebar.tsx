@@ -313,11 +313,13 @@ export type SidebarProps = {
     pages: SidebarItemsType[];
   }[];
   showFooter?: boolean;
+  onProfileClick?: () => void;
 };
 
 const Sidebar: React.FC<SidebarProps> = ({
   items,
   showFooter = true,
+  onProfileClick,
   ...rest
 }) => {
   const dispatch = useDispatch<AppDispatch>();
@@ -454,7 +456,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           onClose={() => setSettingsBoard(null)}
         />
       )}
-      {!!showFooter && <Footer />}
+      {!!showFooter && <Footer onClick={onProfileClick} />}
     </Drawer>
   );
 };

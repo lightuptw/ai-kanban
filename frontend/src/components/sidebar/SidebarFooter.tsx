@@ -11,6 +11,12 @@ const Footer = styled.div`
   padding: ${(props) => props.theme.spacing(2.75)}
     ${(props) => props.theme.spacing(4)};
   border-right: 1px solid rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  transition: background-color 150ms ease;
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.12) !important;
+  }
 `;
 
 const FooterText = styled(Typography)`
@@ -36,11 +42,15 @@ const FooterBadge = styled(Badge)`
   }
 `;
 
-const SidebarFooter: React.FC = ({ ...rest }) => {
+type SidebarFooterProps = {
+  onClick?: () => void;
+};
+
+const SidebarFooter: React.FC<SidebarFooterProps> = ({ onClick, ...rest }) => {
   const { user } = useAuth();
 
   return (
-    <Footer {...rest}>
+    <Footer onClick={onClick} {...rest}>
       <Grid container spacing={2}>
         <Grid item>
           <FooterBadge
