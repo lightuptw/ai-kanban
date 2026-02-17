@@ -8,8 +8,8 @@ import {
 } from "@mui/material";
 import UserAvatar from "../UserAvatar";
 import AvatarUploadDialog from "../AvatarUploadDialog";
-import { getUser, setUser, logout } from "../services/auth";
-import type { AuthUser } from "../services/auth";
+import { getUser, setUser, logout } from "../../services/auth";
+import type { AuthUser } from "../../services/auth";
 
 function NavbarUserDropdown() {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);

@@ -48,6 +48,8 @@ impl Stage {
             (InProgress, Review) => true,
             (Review, Done) => true,
             (Review, Todo) => true,
+            (Review, Plan) => true,
+            (Review, InProgress) => true,
             _ => false,
         }
     }
@@ -69,7 +71,7 @@ impl Stage {
             Plan => vec![Todo, Backlog],
             Todo => vec![InProgress, Backlog],
             InProgress => vec![Review, Backlog],
-            Review => vec![Done, Todo, Backlog],
+            Review => vec![Done, Todo, Plan, InProgress, Backlog],
             Done => vec![Backlog],
         };
         stages.iter().map(|s| s.to_string()).collect()

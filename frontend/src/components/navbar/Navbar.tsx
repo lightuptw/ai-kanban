@@ -17,6 +17,7 @@ import { RootState, AppDispatch } from "../../redux/store";
 import { deleteBoard } from "../../store/slices/kanbanSlice";
 import { fetchNotifications } from "../../store/slices/notificationSlice";
 import NavbarNotificationsDropdown from "./NavbarNotificationsDropdown";
+import NavbarUserDropdown from "./NavbarUserDropdown";
 
 const AppBar = styled(MuiAppBar)`
   background: ${(props) => props.theme.header.background};
@@ -87,6 +88,9 @@ const Navbar: React.FC<NavbarProps> = ({ onDrawerToggle }) => {
                 </IconButton>
               </Grid>
             )}
+            <Grid item>
+              <NavbarUserDropdown />
+            </Grid>
           </Grid>
         </Toolbar>
       </AppBar>

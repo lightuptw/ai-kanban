@@ -187,11 +187,30 @@ impl GitWorktreeService {
         })
     }
 
-    pub fn merge_branch(repo_path: &str, branch_name: &str) -> Result<MergeResult, KanbanError> {
+    pub fn merge_branch(
+        repo_path: &str,
+        branch_name: &str,
+        worktree_path: &str,
+        card_title: &str,
+    ) -> Result<MergeResult, KanbanError> {
+        if !worktree_path.is_empty() && Path::new(worktree_path).exists() {
+            Self::commit_worktree_changes(worktree_path, card_title)?;
+        }
+
         let default_branch = Self::detect_default_branch(repo_path);
 
         let _previous_branch =
             Self::run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]).ok();
+
+        let stashed = Self::run_git(
+            repo_path,
+            &["stash", "push", "-u", "-m", "kanban-merge-temp"],
+        )
+        .is_ok()
+            && Self::run_git(repo_path, &["stash", "list"])
+                .map(|list| list.contains("kanban-merge-temp"))
+                .unwrap_or(false);
+
         Self::run_git(repo_path, &["checkout", default_branch.as_str()])?;
 
         let merge_message = format!("Merge {}", branch_name);
@@ -237,20 +256,36 @@ impl GitWorktreeService {
             tracing::warn!(error = %error, "Failed to return to previous branch after merge");
         }
 
+        if stashed {
+            if let Err(error) = Self::run_git(repo_path, &["stash", "pop"]) {
+                tracing::warn!(error = %error, "Failed to restore stash after merge");
+            }
+        }
+
         Ok(merge_result)
     }
 
     pub fn create_github_pr(
         repo_path: &str,
         branch_name: &str,
+        worktree_path: &str,
         title: &str,
         body: &str,
     ) -> Result<String, KanbanError> {
+        if !worktree_path.is_empty() && Path::new(worktree_path).exists() {
+            Self::commit_worktree_changes(worktree_path, title)?;
+        }
+
         let default_branch = Self::detect_default_branch(repo_path);
 
         Self::run_git(repo_path, &["push", "origin", branch_name])?;
 
-        let output = Command::new("gh")
+        let gh_path = Self::find_gh_binary();
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/steven".to_string());
+        let extended_path = format!("{}/bin:{}", home, current_path);
+
+        let output = Command::new(&gh_path)
             .args([
                 "pr",
                 "create",
@@ -264,8 +299,9 @@ impl GitWorktreeService {
                 branch_name,
             ])
             .current_dir(repo_path)
+            .env("PATH", &extended_path)
             .output()
-            .map_err(|e| KanbanError::Internal(format!("Failed to run gh: {}", e)))?;
+            .map_err(|e| KanbanError::Internal(format!("Failed to run gh (looked for '{}'): {}", gh_path, e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -283,6 +319,34 @@ impl GitWorktreeService {
         }
 
         Ok(stdout)
+    }
+
+    fn commit_worktree_changes(
+        worktree_path: &str,
+        card_title: &str,
+    ) -> Result<(), KanbanError> {
+        let status = Self::run_git(worktree_path, &["status", "--porcelain"])?;
+        if status.trim().is_empty() {
+            return Ok(());
+        }
+
+        tracing::info!(
+            worktree_path,
+            "Auto-committing uncommitted AI work before merge"
+        );
+
+        Self::run_git(worktree_path, &["add", "-A"])?;
+
+        let message = format!("feat: {}", card_title);
+        if let Err(e) = Self::run_git(worktree_path, &["commit", "-m", &message]) {
+            tracing::warn!(
+                worktree_path,
+                error = %e,
+                "Auto-commit had no staged changes after git add"
+            );
+        }
+
+        Ok(())
     }
 
     fn ensure_gitignore_entry(repo_path: &str) -> Result<(), KanbanError> {
@@ -345,6 +409,17 @@ impl GitWorktreeService {
     }
 
     fn detect_default_branch(repo_path: &str) -> String {
+        // 1. Use the current checked-out branch (most reliable for local merge).
+        //    AI worktree branches are forked from whatever HEAD was at creation time,
+        //    so merging back into HEAD is the correct target.
+        if let Ok(output) = Self::run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+            let branch = output.trim();
+            if !branch.is_empty() && branch != "HEAD" {
+                return branch.to_string();
+            }
+        }
+
+        // 2. Try the remote default branch.
         if let Ok(output) = Self::run_git(repo_path, &["symbolic-ref", "refs/remotes/origin/HEAD"])
         {
             let branch_ref = output.trim();
@@ -355,6 +430,7 @@ impl GitWorktreeService {
             }
         }
 
+        // 3. Fall back to common branch names.
         if Self::run_git(repo_path, &["rev-parse", "--verify", "main"]).is_ok() {
             return "main".to_string();
         }
@@ -364,6 +440,15 @@ impl GitWorktreeService {
         }
 
         "main".to_string()
+    }
+
+    fn find_gh_binary() -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/steven".to_string());
+        let user_gh = format!("{}/bin/gh", home);
+        if Path::new(&user_gh).exists() {
+            return user_gh;
+        }
+        "gh".to_string()
     }
 
     fn run_git(repo_path: &str, args: &[&str]) -> Result<String, KanbanError> {

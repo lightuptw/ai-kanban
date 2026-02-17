@@ -166,6 +166,10 @@ impl SseRelayService {
 
         match event_type {
             "session.status" => {
+                if card.stage == "review" || card.stage == "done" {
+                    return Ok(());
+                }
+
                 let status_type = properties
                     .get("status")
                     .and_then(|s| s.get("type"))
@@ -189,13 +193,26 @@ impl SseRelayService {
                             .bind(&card.id)
                             .execute(&self.db)
                             .await?;
+                        } else if card.stage == "in_progress"
+                            && card.ai_status != "working"
+                        {
+                            sqlx::query(
+                                "UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?",
+                            )
+                            .bind("working")
+                            .bind(&now)
+                            .bind(&card.id)
+                            .execute(&self.db)
+                            .await?;
                         } else if card.stage == "plan" && card.ai_status == "planning" {
-                            sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
-                                .bind("working")
-                                .bind(&now)
-                                .bind(&card.id)
-                                .execute(&self.db)
-                                .await?;
+                            sqlx::query(
+                                "UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?",
+                            )
+                            .bind("working")
+                            .bind(&now)
+                            .bind(&card.id)
+                            .execute(&self.db)
+                            .await?;
                         }
                     }
                     _ => {
@@ -205,6 +222,9 @@ impl SseRelayService {
             }
 
             "session.idle" => {
+                if card.stage == "review" || card.stage == "done" {
+                    return Ok(());
+                }
                 if card.stage == "in_progress" {
                     tracing::info!(
                         card_id = card.id,

@@ -7,8 +7,12 @@ pub struct PlanGenerator;
 
 impl PlanGenerator {
     pub fn generate_plan(card: &Card, subtasks: &[Subtask]) -> Result<String, String> {
-        let linked_documents: Vec<String> = serde_json::from_str(&card.linked_documents)
-            .map_err(|e| format!("Failed to parse linked_documents JSON: {}", e))?;
+        let linked_documents: Vec<String> = if card.linked_documents.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&card.linked_documents)
+                .unwrap_or_default()
+        };
 
         let slug = Self::slugify(&card.title);
         let references = if linked_documents.is_empty() {

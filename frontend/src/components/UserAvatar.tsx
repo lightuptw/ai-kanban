@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Avatar } from "@mui/material";
 import { avatarUrl } from "../services/auth";
 
@@ -23,28 +23,25 @@ const UserAvatar: React.FC<UserAvatarProps> = ({
   hasAvatar,
   size = 32,
 }) => {
-  if (hasAvatar && userId) {
-    return (
-      <Avatar
-        src={avatarUrl(userId)}
-        sx={{ width: size, height: size }}
-        alt={nickname}
-      />
-    );
-  }
+  const [imgError, setImgError] = useState(false);
+  const showImage = userId && (hasAvatar !== false) && !imgError;
 
   const hue = hashToHue(userId || nickname);
   const initial = (nickname || "?").charAt(0).toUpperCase();
 
   return (
     <Avatar
+      src={showImage ? avatarUrl(userId) : undefined}
       sx={{
         width: size,
         height: size,
-        bgcolor: `hsl(${hue}, 65%, 50%)`,
-        fontSize: size * 0.45,
+        ...(!showImage && {
+          bgcolor: `hsl(${hue}, 65%, 50%)`,
+          fontSize: size * 0.45,
+        }),
       }}
       alt={nickname}
+      imgProps={{ onError: () => setImgError(true) }}
     >
       {initial}
     </Avatar>

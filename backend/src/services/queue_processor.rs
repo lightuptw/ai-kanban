@@ -204,7 +204,15 @@ impl QueueProcessor {
             }
 
             let Some(session_id) = card.ai_session_id.as_deref() else {
-                if let Err(error) = self.mark_card_failed_and_emit(&card.id).await {
+                let target_status = if card.stage == "review" {
+                    "completed"
+                } else {
+                    "failed"
+                };
+                if let Err(error) = self
+                    .mark_card_status_and_emit(&card.id, target_status)
+                    .await
+                {
                     tracing::warn!(
                         card_id = card.id,
                         error = %error,
@@ -216,6 +224,7 @@ impl QueueProcessor {
                 tracing::warn!(
                     card_id = card.id,
                     ai_status = card.ai_status,
+                    target_status,
                     "Recovered stuck card with missing session id"
                 );
                 continue;
@@ -230,13 +239,16 @@ impl QueueProcessor {
                         let status = body
                             .get("status")
                             .and_then(|status| {
+                                if status.is_null() {
+                                    return None;
+                                }
                                 status
                                     .get("type")
                                     .and_then(serde_json::Value::as_str)
                                     .or_else(|| status.as_str())
                             })
-                            .unwrap_or("");
-                        status == "idle"
+                            .unwrap_or("idle");
+                        status != "busy"
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -263,7 +275,16 @@ impl QueueProcessor {
                 continue;
             }
 
-            if let Err(error) = self.mark_card_failed_and_emit(&card.id).await {
+            let target_status = if card.stage == "review" {
+                "completed"
+            } else {
+                "failed"
+            };
+
+            if let Err(error) = self
+                .mark_card_status_and_emit(&card.id, target_status)
+                .await
+            {
                 tracing::warn!(
                     card_id = card.id,
                     session_id,
@@ -277,6 +298,7 @@ impl QueueProcessor {
                 card_id = card.id,
                 session_id,
                 ai_status = card.ai_status,
+                target_status,
                 "Recovered stuck card"
             );
         }
@@ -284,9 +306,13 @@ impl QueueProcessor {
         Ok(())
     }
 
-    async fn mark_card_failed_and_emit(&self, card_id: &str) -> Result<(), KanbanError> {
+    async fn mark_card_status_and_emit(
+        &self,
+        card_id: &str,
+        status: &str,
+    ) -> Result<(), KanbanError> {
         sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
-            .bind("failed")
+            .bind(status)
             .bind(Utc::now().to_rfc3339())
             .bind(card_id)
             .execute(&self.db)

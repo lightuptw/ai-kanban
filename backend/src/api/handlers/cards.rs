@@ -764,7 +764,12 @@ pub async fn merge_card(
     }
 
     let codebase_path = get_card_codebase_path(pool, &id).await?;
-    let result = GitWorktreeService::merge_branch(&codebase_path, &card.branch_name)?;
+    let result = GitWorktreeService::merge_branch(
+        &codebase_path,
+        &card.branch_name,
+        &card.worktree_path,
+        &card.title,
+    )?;
 
     if result.success {
         let _ = GitWorktreeService::remove_worktree(&codebase_path, &card.worktree_path, &card.branch_name);
@@ -810,7 +815,13 @@ pub async fn create_card_pr(
         )
     });
 
-    let url = GitWorktreeService::create_github_pr(&codebase_path, &card.branch_name, &title, &body)?;
+    let url = GitWorktreeService::create_github_pr(
+        &codebase_path,
+        &card.branch_name,
+        &card.worktree_path,
+        &title,
+        &body,
+    )?;
     Ok(Json(CreatePrResponse { url }))
 }
 
