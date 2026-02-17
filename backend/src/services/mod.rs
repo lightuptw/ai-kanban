@@ -6,6 +6,7 @@ pub mod sse_relay;
 pub mod git_worktree;
 pub mod opencode_manager;
 pub mod notification_service;
+pub mod session_mapping;
 
 pub use card_service::CardService;
 pub use plan_generator::PlanGenerator;
@@ -15,3 +16,4 @@ pub use sse_relay::SseRelayService;
 pub use git_worktree::GitWorktreeService;
 pub use opencode_manager::OpencodeManager;
 pub use notification_service::NotificationService;
+pub use session_mapping::SessionMappingService;

@@ -30,6 +30,10 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
                 .delete(handlers::cards::delete_card),
         )
         .route("/{id}/logs", get(handlers::cards::get_card_logs))
+        .route(
+            "/{id}/agent-activity",
+            get(handlers::cards::get_agent_activity),
+        )
         .route("/{id}/versions", get(handlers::cards::list_card_versions))
         .route(
             "/{id}/versions/{version_id}/restore",

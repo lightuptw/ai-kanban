@@ -149,6 +149,28 @@ export interface AgentLog {
   created_at: string;
 }
 
+export interface SessionMapping {
+  child_session_id: string;
+  card_id: string;
+  parent_session_id: string;
+  agent_type: string | null;
+  description: string;
+  created_at: string;
+}
+
+export interface AgentActivityEntry {
+  agent_type: string | null;
+  event_count: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface AgentActivityResponse {
+  card_id: string;
+  agents: AgentActivityEntry[];
+  session_mappings: SessionMapping[];
+}
+
 export interface CardVersion {
   id: string;
   card_id: string;

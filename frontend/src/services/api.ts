@@ -15,6 +15,7 @@ import type {
   UpdateBoardRequest,
   ReorderBoardRequest,
   AgentLog,
+  AgentActivityResponse,
   CardVersion,
   BoardSettings,
   UpdateBoardSettingsRequest,
@@ -211,6 +212,9 @@ export const api = {
     }),
 
   getCardLogs: (cardId: string) => fetchAPI<AgentLog[]>(`/api/cards/${cardId}/logs`),
+
+  getAgentActivity: (cardId: string) =>
+    fetchAPI<AgentActivityResponse>(`/api/cards/${cardId}/agent-activity`),
 
   getCardVersions: (cardId: string) => fetchAPI<CardVersion[]>(`/api/cards/${cardId}/versions`),
 

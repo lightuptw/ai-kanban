@@ -693,6 +693,143 @@ async fn test_get_card_not_found() {
 // ---------------------------------------------------------------------------
 // Board view
 // ---------------------------------------------------------------------------
+    let activity: serde_json::Value = serde_json::from_str(&body)
+        .expect("agent-activity response should be valid JSON");
+
+    // Verify response shape
+    assert_eq!(activity["card_id"], card_id);
+    assert!(activity["agents"].is_array(), "agents should be an array");
+    assert!(activity["session_mappings"].is_array(), "session_mappings should be an array");
+
+    // Verify agents aggregation: build has 2 events, explore has 1
+    let agents = activity["agents"].as_array()
+        .expect("agents should be a JSON array");
+    assert_eq!(agents.len(), 2, "should have 2 distinct agents");
+
+    // Agents are ordered by first_seen ASC; build appeared first
+    assert_eq!(agents[0]["agent_type"], "build");
+    assert_eq!(agents[0]["event_count"], 2);
+    assert_eq!(agents[0]["first_seen"], early_time);
+    assert_eq!(agents[0]["last_seen"], late_time);
+
+    assert_eq!(agents[1]["agent_type"], "explore");
+    assert_eq!(agents[1]["event_count"], 1);
+
+    // Verify session_mappings in response
+    let sm = activity["session_mappings"].as_array()
+        .expect("session_mappings should be a JSON array");
+    assert_eq!(sm.len(), 1);
+    assert_eq!(sm[0]["child_session_id"], "child-activity-1");
+    assert_eq!(sm[0]["card_id"], card_id);
+    assert_eq!(sm[0]["agent_type"], "explore");
+}
+
+#[tokio::test]
+async fn test_session_mapping_cascade_delete() {
+    let (pool, token) = common::setup_test_db().await;
+    let (sse_tx, _) = tokio::sync::broadcast::channel(100);
+    let http_client = reqwest::Client::new();
+
+    let config = Arc::new(kanban_backend::config::Config {
+        port: 3000,
+        database_url: "sqlite::memory:".to_string(),
+        opencode_url: "http://localhost:4096".to_string(),
+        frontend_dir: "../frontend/dist".to_string(),
+        cors_origin: "http://localhost:5173".to_string(),
+    });
+
+    let state = kanban_backend::api::state::AppState {
+        db: Some(pool.clone()),
+        sse_tx,
+        http_client,
+        config: config.clone(),
+    };
+
+    let app = kanban_backend::api::routes::create_router(state, &config);
+
+    // Create a card
+    let create_body = json!({
+        "title": "Cascade Delete Test Card"
+    })
+    .to_string();
+
+    let (status, body) = common::make_request(
+        app.clone(),
+        "POST",
+        "/api/cards",
+        Some(create_body),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let card: serde_json::Value = serde_json::from_str(&body)
+        .expect("card creation response should be valid JSON");
+    let card_id = card["id"].as_str().expect("card should have an id");
+
+    // Insert session mappings for this card
+    let now = chrono::Utc::now().to_rfc3339();
+    for i in 1..=3 {
+        sqlx::query(
+            "INSERT INTO session_mappings (child_session_id, card_id, parent_session_id, agent_type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind(format!("cascade-child-{}", i))
+        .bind(card_id)
+        .bind("cascade-parent")
+        .bind("build")
+        .bind(format!("Cascade test mapping {}", i))
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .expect("inserting cascade test mapping should succeed");
+    }
+
+    // Verify mappings exist
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM session_mappings WHERE card_id = ?"
+    )
+    .bind(card_id)
+    .fetch_one(&pool)
+    .await
+    .expect("counting mappings should not fail");
+    assert_eq!(count.0, 3, "should have 3 mappings before cascade delete");
+
+    // Delete the card via API (triggers CASCADE)
+    let (status, _) = common::make_request(
+        app.clone(),
+        "DELETE",
+        &format!("/api/cards/{}", card_id),
+        None,
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Verify all session_mappings for that card are gone (CASCADE)
+    let remaining: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM session_mappings WHERE card_id = ?"
+    )
+    .bind(card_id)
+    .fetch_one(&pool)
+    .await
+    .expect("counting remaining mappings should not fail");
+    assert_eq!(
+        remaining.0, 0,
+        "CASCADE delete should remove all session_mappings when card is deleted"
+    );
+
+    // Double-check individual mappings are truly gone
+    let orphan: Option<(String,)> = sqlx::query_as(
+        "SELECT card_id FROM session_mappings WHERE child_session_id = ?"
+    )
+    .bind("cascade-child-1")
+    .fetch_optional(&pool)
+    .await
+    .expect("checking orphan mapping should not fail");
+    assert!(
+        orphan.is_none(),
+        "individual mapping should not survive card deletion"
+    );
+}
 
 #[tokio::test]
 async fn test_get_board() {

@@ -10,9 +10,9 @@ use sqlx::{Row, SqlitePool};
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
 use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
-use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, NotificationType, Stage};
+use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, NotificationType, SessionMapping, Stage};
 use crate::services::git_worktree::{DiffResult, MergeResult};
-use crate::services::{AiDispatchService, CardService, GitWorktreeService, NotificationService};
+use crate::services::{AiDispatchService, CardService, GitWorktreeService, NotificationService, SessionMappingService};
 
 #[derive(Debug, Deserialize)]
 pub struct BoardQuery {
@@ -109,6 +109,54 @@ pub async fn get_card_logs(
     .await
     .map_err(|e| KanbanError::Internal(e.to_string()))?;
     Ok(Json(logs))
+}
+
+#[derive(Serialize)]
+pub struct AgentActivityEntry {
+    pub agent_type: Option<String>,
+    pub event_count: i64,
+    pub first_seen: String,
+    pub last_seen: String,
+}
+
+#[derive(Serialize)]
+pub struct AgentActivityResponse {
+    pub card_id: String,
+    pub agents: Vec<AgentActivityEntry>,
+    pub session_mappings: Vec<SessionMapping>,
+}
+
+pub async fn get_agent_activity(
+    State(state): State<AppState>,
+    Path(card_id): Path<String>,
+) -> Result<Json<AgentActivityResponse>, KanbanError> {
+    let pool = state.require_db()?;
+
+    let agents: Vec<AgentActivityEntry> = sqlx::query_as::<_, (Option<String>, i64, String, String)>(
+        "SELECT agent, COUNT(*) as event_count, MIN(created_at) as first_seen, MAX(created_at) as last_seen FROM agent_logs WHERE card_id = ? GROUP BY agent ORDER BY first_seen ASC",
+    )
+    .bind(&card_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| KanbanError::Internal(e.to_string()))?
+    .into_iter()
+    .map(|(agent_type, event_count, first_seen, last_seen)| AgentActivityEntry {
+        agent_type,
+        event_count,
+        first_seen,
+        last_seen,
+    })
+    .collect();
+
+    let session_mappings = SessionMappingService::list_for_card(pool, &card_id)
+        .await
+        .map_err(|e| KanbanError::Internal(e.to_string()))?;
+
+    Ok(Json(AgentActivityResponse {
+        card_id,
+        agents,
+        session_mappings,
+    }))
 }
 
 pub async fn list_card_versions(

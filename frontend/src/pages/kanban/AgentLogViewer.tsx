@@ -1,7 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import styled from "@emotion/styled";
 import { keyframes } from "@emotion/react";
-import { Box, Typography, Chip, CircularProgress } from "@mui/material";
+import {
+  Box,
+  Typography,
+  Chip,
+  CircularProgress,
+  Collapse,
+  IconButton,
+} from "@mui/material";
 import { api } from "../../services/api";
 import type { AgentLog } from "../../types/kanban";
 import { API_BASE_URL } from "../../constants";
@@ -121,22 +128,74 @@ interface DisplayEntry {
   agent: string | null;
   content: string;
   eventType: string;
+  isSubagent: boolean;
+  agentType: string | null;
   isStreaming?: boolean;
 }
 
-function processLogs(logs: AgentLog[]): DisplayEntry[] {
+interface AgentMetadata {
+  _subagent?: boolean;
+  _agent_type?: string;
+}
+
+type RenderItem =
+  | { type: "entry"; key: string; entry: DisplayEntry }
+  | {
+      type: "group";
+      key: string;
+      agentKey: string;
+      entries: DisplayEntry[];
+      firstTimestamp: string;
+      lastTimestamp: string;
+    };
+
+export function parseAgentMetadata(metadata: string): AgentMetadata {
+  if (!metadata) {
+    return {};
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(metadata);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    const value = parsed as Record<string, unknown>;
+    return {
+      _subagent: value._subagent === true,
+      _agent_type:
+        typeof value._agent_type === "string" ? value._agent_type : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export function getEntryAgentKey(entry: DisplayEntry): string | null {
+  return entry.agent ?? entry.agentType;
+}
+
+export function processLogs(logs: AgentLog[]): DisplayEntry[] {
   const entries: DisplayEntry[] = [];
   let deltaBuffer = "";
   let deltaAgent: string | null = null;
   let deltaTimestamp = "";
   let deltaId = "";
+  let deltaIsSubagent = false;
+  let deltaAgentType: string | null = null;
 
   for (const log of logs) {
+    const metadata = parseAgentMetadata(log.metadata);
+    const isSubagent = metadata._subagent === true;
+    const agentType = metadata._agent_type ?? null;
+
     if (log.event_type === "message.part.delta") {
       if (deltaBuffer === "") {
         deltaTimestamp = log.created_at;
         deltaId = log.id;
         deltaAgent = log.agent;
+        deltaIsSubagent = isSubagent;
+        deltaAgentType = agentType;
       }
       deltaBuffer += log.content;
     } else {
@@ -147,9 +206,16 @@ function processLogs(logs: AgentLog[]): DisplayEntry[] {
           agent: deltaAgent,
           content: deltaBuffer,
           eventType: "message.part.delta",
+          isSubagent: deltaIsSubagent,
+          agentType: deltaAgentType,
           isStreaming: false,
         });
         deltaBuffer = "";
+        deltaAgent = null;
+        deltaTimestamp = "";
+        deltaId = "";
+        deltaIsSubagent = false;
+        deltaAgentType = null;
       }
       entries.push({
         id: log.id,
@@ -157,6 +223,8 @@ function processLogs(logs: AgentLog[]): DisplayEntry[] {
         agent: log.agent,
         content: log.content,
         eventType: log.event_type,
+        isSubagent,
+        agentType,
       });
     }
   }
@@ -168,6 +236,8 @@ function processLogs(logs: AgentLog[]): DisplayEntry[] {
       agent: deltaAgent,
       content: deltaBuffer,
       eventType: "message.part.delta",
+      isSubagent: deltaIsSubagent,
+      agentType: deltaAgentType,
       isStreaming: true,
     });
   }
@@ -188,6 +258,8 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const reconnectAttemptsRef = useRef(0);
   const shouldAutoScroll = useRef(true);
+  const [visibleAgents, setVisibleAgents] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const scrollToBottom = useCallback(() => {
     if (containerRef.current && shouldAutoScroll.current) {
@@ -283,7 +355,186 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
     };
   }, [cardId, scrollToBottom]);
 
-  const displayEntries = processLogs(logs);
+  const displayEntries = useMemo(() => processLogs(logs), [logs]);
+
+  const uniqueAgents = useMemo(() => {
+    const keys = new Set<string>();
+    for (const entry of displayEntries) {
+      const agentKey = getEntryAgentKey(entry);
+      if (agentKey) {
+        keys.add(agentKey);
+      }
+    }
+    return Array.from(keys).sort((a, b) => a.localeCompare(b));
+  }, [displayEntries]);
+
+  useEffect(() => {
+    setVisibleAgents((prev) => {
+      const next: Record<string, boolean> = {};
+      let changed = false;
+
+      for (const agent of uniqueAgents) {
+        next[agent] = prev[agent] ?? true;
+        if (!(agent in prev)) {
+          changed = true;
+        }
+      }
+
+      if (!changed && Object.keys(prev).length === Object.keys(next).length) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [uniqueAgents]);
+
+  const filteredEntries = useMemo(() => {
+    return displayEntries.filter((entry) => {
+      const agentKey = getEntryAgentKey(entry);
+      if (!agentKey) {
+        return true;
+      }
+      return visibleAgents[agentKey] !== false;
+    });
+  }, [displayEntries, visibleAgents]);
+
+  const renderItems = useMemo(() => {
+    const items: RenderItem[] = [];
+    let i = 0;
+
+    while (i < filteredEntries.length) {
+      const current = filteredEntries[i];
+      const currentAgentKey = getEntryAgentKey(current);
+
+      if (current.isSubagent && currentAgentKey) {
+        const groupedEntries: DisplayEntry[] = [current];
+        let j = i + 1;
+
+        while (j < filteredEntries.length) {
+          const candidate = filteredEntries[j];
+          if (!candidate.isSubagent) {
+            break;
+          }
+
+          const candidateAgentKey = getEntryAgentKey(candidate);
+          if (candidateAgentKey !== currentAgentKey) {
+            break;
+          }
+
+          groupedEntries.push(candidate);
+          j += 1;
+        }
+
+        if (groupedEntries.length > 1) {
+          items.push({
+            type: "group",
+            key: `group-${currentAgentKey}-${groupedEntries[0].id}`,
+            agentKey: currentAgentKey,
+            entries: groupedEntries,
+            firstTimestamp: groupedEntries[0].timestamp,
+            lastTimestamp: groupedEntries[groupedEntries.length - 1].timestamp,
+          });
+        } else {
+          items.push({
+            type: "entry",
+            key: current.id,
+            entry: current,
+          });
+        }
+
+        i = j;
+      } else {
+        items.push({
+          type: "entry",
+          key: current.id,
+          entry: current,
+        });
+        i += 1;
+      }
+    }
+
+    return items;
+  }, [filteredEntries]);
+
+  useEffect(() => {
+    setCollapsedGroups((prev) => {
+      const next = { ...prev };
+      let changed = false;
+
+      for (const item of renderItems) {
+        if (item.type === "group" && next[item.key] === undefined) {
+          next[item.key] = true;
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [renderItems]);
+
+  const toggleAgentVisibility = useCallback((agent: string) => {
+    setVisibleAgents((prev) => ({
+      ...prev,
+      [agent]: !(prev[agent] ?? true),
+    }));
+  }, []);
+
+  const toggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroups((prev) => ({
+      ...prev,
+      [groupKey]: !(prev[groupKey] ?? true),
+    }));
+  }, []);
+
+  const renderEntry = useCallback((entry: DisplayEntry, key?: string) => {
+    const agentKey = getEntryAgentKey(entry);
+    const borderColor = getAgentColor(agentKey ?? "");
+
+    return (
+      <LogEntry
+        key={key ?? entry.id}
+        sx={
+          entry.isSubagent
+            ? {
+                ml: 2,
+                pl: 2,
+                borderLeft: `3px solid ${borderColor}`,
+                borderBottomColor: "rgba(255, 255, 255, 0.08)",
+              }
+            : undefined
+        }
+      >
+        <Timestamp>{formatTime(entry.timestamp)}</Timestamp>
+        {entry.isSubagent && (
+          <Typography
+            component="span"
+            sx={{ color: borderColor, lineHeight: 1.5, fontSize: 12, flexShrink: 0 }}
+          >
+            {"->"}
+          </Typography>
+        )}
+        {entry.agent && (
+          <Chip
+            label={entry.agent}
+            size="small"
+            sx={{
+              bgcolor: `${getAgentColor(entry.agent)}22`,
+              color: getAgentColor(entry.agent),
+              fontFamily: "inherit",
+              fontSize: 11,
+              height: 20,
+              flexShrink: 0,
+            }}
+          />
+        )}
+        {entry.isStreaming || entry.eventType === "message.part.delta" ? (
+          <StreamingContent>{entry.content}</StreamingContent>
+        ) : (
+          <LogContent>{entry.content}</LogContent>
+        )}
+      </LogEntry>
+    );
+  }, []);
 
   return (
     <Box>
@@ -323,6 +574,46 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
         </Box>
       </StatusBar>
 
+      {uniqueAgents.length > 0 && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 0.75,
+            mb: 1,
+          }}
+        >
+          <Typography sx={{ color: "#9aa0a6", fontSize: 11, mr: 0.5 }}>
+            Agents
+          </Typography>
+          {uniqueAgents.map((agent) => {
+            const visible = visibleAgents[agent] !== false;
+            const color = getAgentColor(agent);
+
+            return (
+              <Chip
+                key={agent}
+                label={agent}
+                size="small"
+                clickable
+                onClick={() => toggleAgentVisibility(agent)}
+                variant={visible ? "filled" : "outlined"}
+                sx={{
+                  height: 22,
+                  fontFamily: "inherit",
+                  fontSize: 11,
+                  borderColor: `${color}66`,
+                  bgcolor: visible ? `${color}26` : "transparent",
+                  color: visible ? color : "#8d96a0",
+                  opacity: visible ? 1 : 0.7,
+                }}
+              />
+            );
+          })}
+        </Box>
+      )}
+
       <LogContainer ref={containerRef} onScroll={handleScroll}>
         {loading && (
           <Box
@@ -352,30 +643,59 @@ export const AgentLogViewer: React.FC<AgentLogViewerProps> = ({
           </Typography>
         )}
 
-        {displayEntries.map((entry) => (
-          <LogEntry key={entry.id}>
-            <Timestamp>{formatTime(entry.timestamp)}</Timestamp>
-            {entry.agent && (
-              <Chip
-                label={entry.agent}
-                size="small"
+        {renderItems.map((item) => {
+          if (item.type === "entry") {
+            return renderEntry(item.entry, item.key);
+          }
+
+          const isCollapsed = collapsedGroups[item.key] ?? true;
+          const groupColor = getAgentColor(item.agentKey);
+
+          return (
+            <Box
+              key={item.key}
+              sx={{
+                ml: 2,
+                mb: 0.5,
+                borderLeft: `3px solid ${groupColor}`,
+                borderRadius: 0.5,
+                background: "rgba(255, 255, 255, 0.01)",
+              }}
+            >
+              <Box
                 sx={{
-                  bgcolor: `${getAgentColor(entry.agent)}22`,
-                  color: getAgentColor(entry.agent),
-                  fontFamily: "inherit",
-                  fontSize: 11,
-                  height: 20,
-                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  px: 1,
+                  py: 0.5,
+                  borderBottom: isCollapsed ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
                 }}
-              />
-            )}
-            {entry.isStreaming || entry.eventType === "message.part.delta" ? (
-              <StreamingContent>{entry.content}</StreamingContent>
-            ) : (
-              <LogContent>{entry.content}</LogContent>
-            )}
-          </LogEntry>
-        ))}
+              >
+                <IconButton
+                  size="small"
+                  onClick={() => toggleGroup(item.key)}
+                  sx={{ p: 0.25, mr: 0.5, color: groupColor }}
+                >
+                  <Typography sx={{ fontFamily: "inherit", fontSize: 12, lineHeight: 1 }}>
+                    {isCollapsed ? "+" : "-"}
+                  </Typography>
+                </IconButton>
+                <Typography sx={{ color: groupColor, fontSize: 11, fontWeight: 600, mr: 1 }}>
+                  {"-> Delegated: "}{item.agentKey}
+                </Typography>
+                <Typography sx={{ color: "#8d96a0", fontSize: 11 }}>
+                  {item.entries.length} logs ({formatTime(item.firstTimestamp)}-{formatTime(item.lastTimestamp)})
+                </Typography>
+              </Box>
+
+              <Collapse in={!isCollapsed} timeout="auto" unmountOnExit>
+                <Box sx={{ pl: 2 }}>
+                  {item.entries.map((entry) => renderEntry(entry, `${item.key}-${entry.id}`))}
+                </Box>
+              </Collapse>
+            </Box>
+          );
+        })}
       </LogContainer>
     </Box>
   );
