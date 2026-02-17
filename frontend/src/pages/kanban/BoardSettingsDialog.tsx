@@ -35,7 +35,7 @@ import {
 import type { BoardSettings, UpdateBoardSettingsRequest } from "../../types/kanban";
 import { api } from "../../services/api";
 import { useDispatch } from "react-redux";
-import { updateBoard } from "../../store/slices/kanbanSlice";
+import { updateBoard, setAutoDetectStatus } from "../../store/slices/kanbanSlice";
 import type { AppDispatch } from "../../redux/store";
 
 interface BoardSettingsDialogProps {
@@ -192,6 +192,7 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
         if (response.auto_detect_status === "running") {
           setLocalAutoDetectStatus("running");
           setAutoDetectSessionId(response.auto_detect_session_id || null);
+          dispatch(setAutoDetectStatus({ boardId, status: "running" }));
           if (response.auto_detect_started_at) {
             const started = new Date(response.auto_detect_started_at).getTime();
             setAutoDetectStartTime(started);
@@ -334,6 +335,7 @@ export const BoardSettingsDialog: React.FC<BoardSettingsDialogProps> = ({
       setElapsedSeconds(0);
       setShowLogs(false);
       setAutoDetectLogs([]);
+      dispatch(setAutoDetectStatus({ boardId, status: "running" }));
       if (response.session_id) {
         setAutoDetectSessionId(response.session_id);
       }

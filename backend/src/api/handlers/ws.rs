@@ -1,6 +1,7 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
@@ -38,15 +39,26 @@ pub async fn ws_events_handler(
 async fn handle_ws(mut socket: WebSocket, card_id: String, state: AppState) {
     let mut rx = state.sse_tx.subscribe();
 
-    while let Ok(msg) = rx.recv().await {
-        if let Ok(WsEvent::AgentLogCreated {
-            card_id: event_card_id,
-            ..
-        }) = serde_json::from_str::<WsEvent>(&msg)
-        {
-            if event_card_id == card_id && socket.send(Message::Text(msg.into())).await.is_err() {
-                break;
+    loop {
+        match rx.recv().await {
+            Ok(msg) => {
+                if let Ok(WsEvent::AgentLogCreated {
+                    card_id: event_card_id,
+                    ..
+                }) = serde_json::from_str::<WsEvent>(&msg)
+                {
+                    if event_card_id == card_id
+                        && socket.send(Message::Text(msg.into())).await.is_err()
+                    {
+                        break;
+                    }
+                }
             }
+            Err(RecvError::Lagged(n)) => {
+                tracing::debug!(skipped = n, "WS log receiver lagged, continuing");
+                continue;
+            }
+            Err(RecvError::Closed) => break,
         }
     }
 }
@@ -54,11 +66,22 @@ async fn handle_ws(mut socket: WebSocket, card_id: String, state: AppState) {
 async fn handle_ws_events(mut socket: WebSocket, state: AppState) {
     let mut rx = state.sse_tx.subscribe();
 
-    let _ = socket.send(Message::Text(r#"{"type":"connected"}"#.into())).await;
+    let _ = socket
+        .send(Message::Text(r#"{"type":"connected"}"#.into()))
+        .await;
 
-    while let Ok(msg) = rx.recv().await {
-        if socket.send(Message::Text(msg.into())).await.is_err() {
-            break;
+    loop {
+        match rx.recv().await {
+            Ok(msg) => {
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(RecvError::Lagged(n)) => {
+                tracing::debug!(skipped = n, "WS events receiver lagged, continuing");
+                continue;
+            }
+            Err(RecvError::Closed) => break,
         }
     }
 }

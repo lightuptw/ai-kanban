@@ -10,6 +10,19 @@ pub struct PickerResponse {
     pub paths: Vec<String>,
 }
 
+fn run_zenity(args: &[&str]) -> Result<String, KanbanError> {
+    let output = Command::new("zenity")
+        .args(args)
+        .output()
+        .map_err(|e| KanbanError::Internal(format!("Failed to launch zenity: {}", e)))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Ok(String::new())
+    }
+}
+
 fn run_powershell_utf8(script: &str) -> Result<String, KanbanError> {
     let wrapped = format!(
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; {}",
@@ -24,9 +37,13 @@ fn run_powershell_utf8(script: &str) -> Result<String, KanbanError> {
 }
 
 pub async fn pick_directory() -> Result<Json<PickerResponse>, KanbanError> {
-    let raw = run_powershell_utf8(
-        r#"Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select Working Directory'; if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath } else { '' }"#,
-    )?;
+    let raw = if cfg!(target_os = "linux") {
+        run_zenity(&["--file-selection", "--directory", "--title=Select Working Directory"])?
+    } else {
+        run_powershell_utf8(
+            r#"Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select Working Directory'; if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath } else { '' }"#,
+        )?
+    };
 
     let path = if raw.is_empty() { None } else { Some(raw) };
 
@@ -37,9 +54,18 @@ pub async fn pick_directory() -> Result<Json<PickerResponse>, KanbanError> {
 }
 
 pub async fn pick_files() -> Result<Json<PickerResponse>, KanbanError> {
-    let raw = run_powershell_utf8(
-        r#"Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Multiselect = $true; $f.Title = 'Select Files to Link'; if ($f.ShowDialog() -eq 'OK') { $f.FileNames -join '|' } else { '' }"#,
-    )?;
+    let raw = if cfg!(target_os = "linux") {
+        run_zenity(&[
+            "--file-selection",
+            "--multiple",
+            "--separator=|",
+            "--title=Select Files to Link",
+        ])?
+    } else {
+        run_powershell_utf8(
+            r#"Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Multiselect = $true; $f.Title = 'Select Files to Link'; if ($f.ShowDialog() -eq 'OK') { $f.FileNames -join '|' } else { '' }"#,
+        )?
+    };
 
     let paths: Vec<String> = if raw.is_empty() {
         vec![]
