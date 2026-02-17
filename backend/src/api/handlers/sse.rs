@@ -93,4 +93,18 @@ pub enum WsEvent {
     NotificationCreated {
         notification: serde_json::Value,
     },
+    MergeConflictDetected {
+        card_id: String,
+        conflict_count: usize,
+    },
+    MergeConflictResolved {
+        card_id: String,
+        remaining_count: usize,
+    },
+    MergeCompleted {
+        card_id: String,
+    },
+    MergeAborted {
+        card_id: String,
+    },
 }

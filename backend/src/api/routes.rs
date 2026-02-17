@@ -42,6 +42,16 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         .route("/{id}/move", patch(handlers::cards::move_card))
         .route("/{id}/diff", get(handlers::cards::get_card_diff))
         .route("/{id}/merge", post(handlers::cards::merge_card))
+        .route("/{id}/conflicts", get(handlers::cards::get_conflicts))
+        .route(
+            "/{id}/resolve-conflicts",
+            post(handlers::cards::resolve_conflicts),
+        )
+        .route(
+            "/{id}/complete-merge",
+            post(handlers::cards::complete_merge),
+        )
+        .route("/{id}/abort-merge", post(handlers::cards::abort_merge))
         .route("/{id}/create-pr", post(handlers::cards::create_card_pr))
         .route("/{id}/reject", post(handlers::cards::reject_card))
         .route("/{id}/generate-plan", post(handlers::cards::generate_plan))

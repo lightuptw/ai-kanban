@@ -34,6 +34,35 @@ pub struct MergeResult {
     pub success: bool,
     pub message: String,
     pub conflicts: Vec<String>,
+    pub conflict_detail: Option<ConflictDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictFile {
+    pub path: String,
+    pub ours_content: Option<String>,
+    pub theirs_content: Option<String>,
+    pub base_content: Option<String>,
+    pub conflict_type: String,
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictDetail {
+    pub files: Vec<ConflictFile>,
+    pub merge_in_progress: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileResolution {
+    pub file_path: String,
+    pub choice: String,
+    pub manual_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveRequest {
+    pub resolutions: Vec<FileResolution>,
 }
 
 pub struct GitWorktreeService;
@@ -190,6 +219,7 @@ impl GitWorktreeService {
     pub fn merge_branch(
         repo_path: &str,
         branch_name: &str,
+        keep_conflicts: bool,
         worktree_path: &str,
         card_title: &str,
     ) -> Result<MergeResult, KanbanError> {
@@ -228,6 +258,7 @@ impl GitWorktreeService {
                 success: true,
                 message: format!("Merged {} into {}", branch_name, default_branch),
                 conflicts: Vec::new(),
+                conflict_detail: None,
             },
             Err(error) => {
                 let conflicts =
@@ -242,18 +273,27 @@ impl GitWorktreeService {
                         })
                         .unwrap_or_default();
 
-                let _ = Self::run_git(repo_path, &["merge", "--abort"]);
+                let conflict_detail = if keep_conflicts {
+                    Some(Self::get_conflict_details(repo_path)?)
+                } else {
+                    let _ = Self::run_git(repo_path, &["merge", "--abort"]);
+                    None
+                };
 
                 MergeResult {
                     success: false,
                     message: format!("Merge failed: {}", error),
                     conflicts,
+                    conflict_detail,
                 }
             }
         };
 
-        if let Err(error) = Self::run_git(repo_path, &["checkout", "-"]) {
-            tracing::warn!(error = %error, "Failed to return to previous branch after merge");
+        let should_checkout_previous = !(keep_conflicts && !merge_result.success);
+        if should_checkout_previous {
+            if let Err(error) = Self::run_git(repo_path, &["checkout", "-"]) {
+                tracing::warn!(error = %error, "Failed to return to previous branch after merge");
+            }
         }
 
         if stashed {
@@ -263,6 +303,110 @@ impl GitWorktreeService {
         }
 
         Ok(merge_result)
+    }
+
+    pub fn get_conflict_details(repo_path: &str) -> Result<ConflictDetail, KanbanError> {
+        if !Self::is_merge_in_progress(repo_path) {
+            return Ok(ConflictDetail {
+                files: Vec::new(),
+                merge_in_progress: false,
+            });
+        }
+
+        let unmerged_output = Self::run_git(repo_path, &["ls-files", "--unmerged"])?;
+        let mut path_stages: HashMap<String, (bool, bool, bool)> = HashMap::new();
+
+        for line in unmerged_output
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+        {
+            let Some((meta, path)) = line.split_once('\t') else {
+                continue;
+            };
+
+            let stage = meta
+                .split_whitespace()
+                .nth(2)
+                .and_then(|value| value.parse::<u8>().ok());
+
+            let entry = path_stages
+                .entry(path.to_string())
+                .or_insert((false, false, false));
+
+            match stage {
+                Some(1) => entry.0 = true,
+                Some(2) => entry.1 = true,
+                Some(3) => entry.2 = true,
+                _ => {}
+            }
+        }
+
+        let mut binary_paths = std::collections::HashSet::new();
+        if let Ok(binary_output) =
+            Self::run_git(repo_path, &["diff", "--numstat", "HEAD", "MERGE_HEAD"])
+        {
+            for line in binary_output.lines().filter(|line| !line.trim().is_empty()) {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() < 3 {
+                    continue;
+                }
+
+                if parts[0] == "-" && parts[1] == "-" {
+                    binary_paths.insert(parts[2].to_string());
+                }
+            }
+        }
+
+        let mut files: Vec<ConflictFile> = path_stages
+            .iter()
+            .map(|(path, (has_base, has_ours, has_theirs))| {
+                let conflict_type = match (*has_base, *has_ours, *has_theirs) {
+                    (true, true, true) => "both-modified",
+                    (false, true, true) => "added-by-both",
+                    (true, false, true) => "deleted-by-us",
+                    (true, true, false) => "deleted-by-them",
+                    _ => "both-modified",
+                }
+                .to_string();
+
+                let is_binary = binary_paths.contains(path);
+                let base_content = if *has_base {
+                    Self::run_git(repo_path, &["show", format!(":1:{}", path).as_str()]).ok()
+                } else {
+                    None
+                };
+                let ours_content = if *has_ours {
+                    Self::run_git(repo_path, &["show", format!(":2:{}", path).as_str()]).ok()
+                } else {
+                    None
+                };
+                let theirs_content = if *has_theirs {
+                    Self::run_git(repo_path, &["show", format!(":3:{}", path).as_str()]).ok()
+                } else {
+                    None
+                };
+
+                ConflictFile {
+                    path: path.clone(),
+                    ours_content,
+                    theirs_content,
+                    base_content,
+                    conflict_type,
+                    is_binary,
+                }
+            })
+            .collect();
+
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+
+        Ok(ConflictDetail {
+            files,
+            merge_in_progress: true,
+        })
+    }
+
+    pub fn is_merge_in_progress(repo_path: &str) -> bool {
+        Path::new(repo_path).join(".git/MERGE_HEAD").exists()
     }
 
     pub fn create_github_pr(
@@ -451,7 +595,7 @@ impl GitWorktreeService {
         "gh".to_string()
     }
 
-    fn run_git(repo_path: &str, args: &[&str]) -> Result<String, KanbanError> {
+    pub fn run_git(repo_path: &str, args: &[&str]) -> Result<String, KanbanError> {
         let output = Command::new("git")
             .args(args)
             .current_dir(repo_path)

@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
@@ -12,6 +14,7 @@ pub struct AppState {
     pub sse_tx: broadcast::Sender<String>,
     pub http_client: reqwest::Client,
     pub config: Arc<Config>,
+    pub merge_locks: Arc<Mutex<HashSet<String>>>,
 }
 
 impl AppState {
@@ -26,6 +29,7 @@ impl AppState {
             sse_tx,
             http_client,
             config,
+            merge_locks: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

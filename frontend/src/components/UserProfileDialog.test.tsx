@@ -18,6 +18,7 @@ vi.mock("../hooks/useAuth", () => ({
       last_name: "",
       email: "test@test.com",
       tenant_id: "t1",
+      has_avatar: false,
       avatar_url: null,
       profile_completed: true,
     },
@@ -52,6 +53,7 @@ const baseUser: AuthUser = {
   last_name: "",
   email: "test@test.com",
   tenant_id: "t1",
+  has_avatar: false,
   avatar_url: null,
   profile_completed: true,
 };

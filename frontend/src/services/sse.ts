@@ -40,6 +40,8 @@ interface WsEventData {
   message?: string;
   question?: Record<string, unknown>;
   notification?: Notification;
+  conflict_count?: number;
+  remaining_count?: number;
 }
 
 const WS_DEBUG = import.meta.env.DEV;
@@ -265,6 +267,24 @@ export class WebSocketManager {
 
       case "connected":
         wsLog("[WS] Server confirmed connection");
+        break;
+
+      case "mergeConflictDetected":
+        console.log("[WS] Merge conflict detected:", event.card_id, event.conflict_count);
+        break;
+
+      case "mergeConflictResolved":
+        console.log("[WS] Merge conflict resolved:", event.card_id, event.remaining_count);
+        break;
+
+      case "mergeCompleted":
+        console.log("[WS] Merge completed:", event.card_id);
+        window.dispatchEvent(new CustomEvent("mergeCompleted", { detail: { cardId: event.card_id } }));
+        break;
+
+      case "mergeAborted":
+        console.log("[WS] Merge aborted:", event.card_id);
+        window.dispatchEvent(new CustomEvent("mergeAborted", { detail: { cardId: event.card_id } }));
         break;
 
       default:

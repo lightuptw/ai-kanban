@@ -6,12 +6,15 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
+use std::collections::HashSet;
+use std::path::Path as FsPath;
+use std::sync::{Arc, Mutex};
 
 use crate::api::dto::{BoardResponse, CardResponse, CreateCardRequest, MoveCardRequest, UpdateCardRequest};
 use crate::api::handlers::sse::WsEvent;
 use crate::api::AppState;
 use crate::domain::{AgentLog, Card, CardVersion, Comment, KanbanError, NotificationType, SessionMapping, Stage};
-use crate::services::git_worktree::{DiffResult, MergeResult};
+use crate::services::git_worktree::{ConflictDetail, DiffResult, MergeResult, ResolveRequest};
 use crate::services::{AiDispatchService, CardService, GitWorktreeService, NotificationService, SessionMappingService};
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +62,67 @@ async fn get_card_codebase_path(pool: &SqlitePool, card_id: &str) -> Result<Stri
     }
 
     Ok(codebase_path)
+}
+
+fn broadcast_event(state: &AppState, event: &WsEvent) {
+    if let Ok(payload) = serde_json::to_string(event) {
+        let _ = state.sse_tx.send(payload);
+    }
+}
+
+struct MergeLockGuard {
+    locks: Arc<Mutex<HashSet<String>>>,
+    codebase_path: String,
+    keep_lock: bool,
+}
+
+impl MergeLockGuard {
+    fn acquire(state: &AppState, codebase_path: &str) -> Result<Self, KanbanError> {
+        let mut locks = state
+            .merge_locks
+            .lock()
+            .map_err(|_| KanbanError::Internal("Merge lock state poisoned".into()))?;
+
+        if locks.contains(codebase_path) {
+            return Err(KanbanError::Conflict(
+                "A merge operation is already active for this codebase".into(),
+            ));
+        }
+
+        locks.insert(codebase_path.to_string());
+        drop(locks);
+
+        Ok(Self {
+            locks: Arc::clone(&state.merge_locks),
+            codebase_path: codebase_path.to_string(),
+            keep_lock: false,
+        })
+    }
+
+    fn keep_lock(&mut self) {
+        self.keep_lock = true;
+    }
+}
+
+impl Drop for MergeLockGuard {
+    fn drop(&mut self) {
+        if self.keep_lock {
+            return;
+        }
+
+        if let Ok(mut locks) = self.locks.lock() {
+            locks.remove(&self.codebase_path);
+        }
+    }
+}
+
+fn release_merge_lock(state: &AppState, codebase_path: &str) -> Result<(), KanbanError> {
+    let mut locks = state
+        .merge_locks
+        .lock()
+        .map_err(|_| KanbanError::Internal("Merge lock state poisoned".into()))?;
+    locks.remove(codebase_path);
+    Ok(())
 }
 
 pub async fn create_card(
@@ -795,6 +859,216 @@ pub async fn get_card_diff(
     Ok(Json(diff))
 }
 
+pub async fn get_conflicts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ConflictDetail>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.stage != "review" {
+        return Err(KanbanError::BadRequest(
+            "Card must be in review stage to inspect merge conflicts".into(),
+        ));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+    if !GitWorktreeService::is_merge_in_progress(&codebase_path) {
+        return Err(KanbanError::BadRequest(
+            "No merge in progress for this card".into(),
+        ));
+    }
+
+    let detail = GitWorktreeService::get_conflict_details(&codebase_path)?;
+    Ok(Json(detail))
+}
+
+pub async fn resolve_conflicts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ResolveRequest>,
+) -> Result<Json<ConflictDetail>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.stage != "review" {
+        return Err(KanbanError::BadRequest(
+            "Card must be in review stage to resolve conflicts".into(),
+        ));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+    if !GitWorktreeService::is_merge_in_progress(&codebase_path) {
+        return Err(KanbanError::BadRequest(
+            "No merge in progress for this card".into(),
+        ));
+    }
+
+    for resolution in &req.resolutions {
+        match resolution.choice.as_str() {
+            "ours" => {
+                GitWorktreeService::run_git(
+                    &codebase_path,
+                    &["checkout", "--ours", "--", resolution.file_path.as_str()],
+                )?;
+                GitWorktreeService::run_git(
+                    &codebase_path,
+                    &["add", "--", resolution.file_path.as_str()],
+                )?;
+            }
+            "theirs" => {
+                GitWorktreeService::run_git(
+                    &codebase_path,
+                    &["checkout", "--theirs", "--", resolution.file_path.as_str()],
+                )?;
+                GitWorktreeService::run_git(
+                    &codebase_path,
+                    &["add", "--", resolution.file_path.as_str()],
+                )?;
+            }
+            "manual" => {
+                let manual_content = resolution.manual_content.as_ref().ok_or_else(|| {
+                    KanbanError::BadRequest(format!(
+                        "manual_content is required for manual resolution: {}",
+                        resolution.file_path
+                    ))
+                })?;
+
+                let file_path = FsPath::new(&codebase_path).join(&resolution.file_path);
+                std::fs::write(&file_path, manual_content).map_err(|e| {
+                    KanbanError::Internal(format!(
+                        "Failed to write manual resolution for {}: {}",
+                        resolution.file_path, e
+                    ))
+                })?;
+
+                GitWorktreeService::run_git(
+                    &codebase_path,
+                    &["add", "--", resolution.file_path.as_str()],
+                )?;
+            }
+            _ => {
+                return Err(KanbanError::BadRequest(format!(
+                    "Invalid resolution choice '{}' for file {}",
+                    resolution.choice, resolution.file_path
+                )));
+            }
+        }
+    }
+
+    let detail = GitWorktreeService::get_conflict_details(&codebase_path)?;
+
+    let event = WsEvent::MergeConflictResolved {
+        card_id: id,
+        remaining_count: detail.files.len(),
+    };
+    broadcast_event(&state, &event);
+
+    Ok(Json(detail))
+}
+
+pub async fn complete_merge(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<MergeResult>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.stage != "review" {
+        return Err(KanbanError::BadRequest(
+            "Card must be in review stage to complete merge".into(),
+        ));
+    }
+    if card.branch_name.is_empty() {
+        return Err(KanbanError::BadRequest("Card has no git branch".into()));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+    if !GitWorktreeService::is_merge_in_progress(&codebase_path) {
+        return Err(KanbanError::BadRequest(
+            "No merge in progress for this card".into(),
+        ));
+    }
+
+    let unmerged = GitWorktreeService::run_git(&codebase_path, &["ls-files", "--unmerged"])?;
+    if !unmerged.trim().is_empty() {
+        return Err(KanbanError::BadRequest(
+            "Cannot complete merge while conflicts remain".into(),
+        ));
+    }
+
+    GitWorktreeService::run_git(&codebase_path, &["commit", "--no-edit"])?;
+    if let Err(error) = GitWorktreeService::run_git(&codebase_path, &["checkout", "-"]) {
+        tracing::warn!(error = %error, card_id = %id, "Failed to return to previous branch after merge completion");
+    }
+
+    let _ = GitWorktreeService::remove_worktree(&codebase_path, &card.worktree_path, &card.branch_name);
+
+    sqlx::query("UPDATE cards SET stage = 'done', branch_name = '', worktree_path = '', working_directory = '.', updated_at = ? WHERE id = ?")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    release_merge_lock(&state, &codebase_path)?;
+
+    broadcast_event(&state, &WsEvent::MergeCompleted { card_id: id.clone() });
+    broadcast_event(
+        &state,
+        &WsEvent::CardMoved {
+            card_id: id.clone(),
+            from_stage: "review".to_string(),
+            to_stage: "done".to_string(),
+        },
+    );
+
+    Ok(Json(MergeResult {
+        success: true,
+        message: "Merge completed successfully".to_string(),
+        conflicts: Vec::new(),
+        conflict_detail: None,
+    }))
+}
+
+pub async fn abort_merge(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.stage != "review" {
+        return Err(KanbanError::BadRequest(
+            "Card must be in review stage to abort merge".into(),
+        ));
+    }
+
+    let codebase_path = get_card_codebase_path(pool, &id).await?;
+
+    if let Err(abort_error) = GitWorktreeService::run_git(&codebase_path, &["merge", "--abort"]) {
+        tracing::warn!(
+            error = %abort_error,
+            card_id = %id,
+            "git merge --abort failed, using fallback reset"
+        );
+        GitWorktreeService::run_git(&codebase_path, &["reset", "--hard", "HEAD"])?;
+    }
+
+    if let Err(checkout_error) = GitWorktreeService::run_git(&codebase_path, &["checkout", "-"]) {
+        tracing::warn!(
+            error = %checkout_error,
+            card_id = %id,
+            "Failed to return to previous branch after abort"
+        );
+    }
+
+    release_merge_lock(&state, &codebase_path)?;
+
+    broadcast_event(&state, &WsEvent::MergeAborted { card_id: id });
+
+    Ok(StatusCode::OK)
+}
+
 pub async fn merge_card(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -812,9 +1086,11 @@ pub async fn merge_card(
     }
 
     let codebase_path = get_card_codebase_path(pool, &id).await?;
+    let mut merge_lock = MergeLockGuard::acquire(&state, &codebase_path)?;
     let result = GitWorktreeService::merge_branch(
         &codebase_path,
         &card.branch_name,
+        true,
         &card.worktree_path,
         &card.title,
     )?;
@@ -828,14 +1104,23 @@ pub async fn merge_card(
             .execute(pool)
             .await?;
 
+        broadcast_event(&state, &WsEvent::MergeCompleted { card_id: id.clone() });
+
         let event = WsEvent::CardMoved {
             card_id: id.clone(),
             from_stage: "review".to_string(),
             to_stage: "done".to_string(),
         };
-        if let Ok(payload) = serde_json::to_string(&event) {
-            let _ = state.sse_tx.send(payload);
-        }
+        broadcast_event(&state, &event);
+    } else {
+        merge_lock.keep_lock();
+        broadcast_event(
+            &state,
+            &WsEvent::MergeConflictDetected {
+                card_id: id.clone(),
+                conflict_count: result.conflicts.len(),
+            },
+        );
     }
 
     Ok(Json(result))

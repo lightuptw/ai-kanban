@@ -3,7 +3,8 @@ mod common;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use serde_json::json;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 fn test_config() -> Arc<kanban_backend::config::Config> {
@@ -27,6 +28,7 @@ async fn test_app() -> (axum::Router, String) {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -44,6 +46,7 @@ async fn test_app_with_user_id() -> (axum::Router, String, String) {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -61,6 +64,7 @@ async fn test_app_with_pool() -> (axum::Router, String, sqlx::SqlitePool) {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);
@@ -693,36 +697,6 @@ async fn test_get_card_not_found() {
 // ---------------------------------------------------------------------------
 // Board view
 // ---------------------------------------------------------------------------
-    let activity: serde_json::Value = serde_json::from_str(&body)
-        .expect("agent-activity response should be valid JSON");
-
-    // Verify response shape
-    assert_eq!(activity["card_id"], card_id);
-    assert!(activity["agents"].is_array(), "agents should be an array");
-    assert!(activity["session_mappings"].is_array(), "session_mappings should be an array");
-
-    // Verify agents aggregation: build has 2 events, explore has 1
-    let agents = activity["agents"].as_array()
-        .expect("agents should be a JSON array");
-    assert_eq!(agents.len(), 2, "should have 2 distinct agents");
-
-    // Agents are ordered by first_seen ASC; build appeared first
-    assert_eq!(agents[0]["agent_type"], "build");
-    assert_eq!(agents[0]["event_count"], 2);
-    assert_eq!(agents[0]["first_seen"], early_time);
-    assert_eq!(agents[0]["last_seen"], late_time);
-
-    assert_eq!(agents[1]["agent_type"], "explore");
-    assert_eq!(agents[1]["event_count"], 1);
-
-    // Verify session_mappings in response
-    let sm = activity["session_mappings"].as_array()
-        .expect("session_mappings should be a JSON array");
-    assert_eq!(sm.len(), 1);
-    assert_eq!(sm[0]["child_session_id"], "child-activity-1");
-    assert_eq!(sm[0]["card_id"], card_id);
-    assert_eq!(sm[0]["agent_type"], "explore");
-}
 
 #[tokio::test]
 async fn test_session_mapping_cascade_delete() {
@@ -743,6 +717,7 @@ async fn test_session_mapping_cascade_delete() {
         sse_tx,
         http_client,
         config: config.clone(),
+        merge_locks: Arc::new(Mutex::new(HashSet::new())),
     };
 
     let app = kanban_backend::api::routes::create_router(state, &config);

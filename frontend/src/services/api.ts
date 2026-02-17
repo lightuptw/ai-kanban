@@ -20,6 +20,8 @@ import type {
   BoardSettings,
   UpdateBoardSettingsRequest,
   DiffResult,
+  ConflictDetail,
+  FileResolution,
   MergeResult,
   Notification,
 } from "../types/kanban";
@@ -228,6 +230,21 @@ export const api = {
 
   mergeCard: (cardId: string) =>
     fetchAPI<MergeResult>(`/api/cards/${cardId}/merge`, { method: "POST" }),
+
+  getConflicts: (cardId: string) =>
+    fetchAPI<ConflictDetail>(`/api/cards/${cardId}/conflicts`),
+
+  resolveConflicts: (cardId: string, resolutions: FileResolution[]) =>
+    fetchAPI<ConflictDetail>(`/api/cards/${cardId}/resolve-conflicts`, {
+      method: "POST",
+      body: JSON.stringify({ resolutions }),
+    }),
+
+  completeMerge: (cardId: string) =>
+    fetchAPI<MergeResult>(`/api/cards/${cardId}/complete-merge`, { method: "POST" }),
+
+  abortMerge: (cardId: string) =>
+    fetchAPI<void>(`/api/cards/${cardId}/abort-merge`, { method: "POST" }),
 
   createCardPr: (cardId: string, title?: string, body?: string) =>
     fetchAPI<{ url: string }>(`/api/cards/${cardId}/create-pr`, {
