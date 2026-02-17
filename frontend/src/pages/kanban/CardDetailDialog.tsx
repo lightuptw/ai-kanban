@@ -658,7 +658,9 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
      }
    };
 
-  const isAiActive = card?.ai_status && ["planning", "dispatched", "working", "queued", "waiting_input"].includes(card.ai_status);
+  const isAiActive = card?.ai_status && ["planning", "dispatched", "working", "queued", "waiting_input", "waiting"].includes(card.ai_status);
+  const isAiFailed = card?.ai_status === "failed";
+  const isAiWaiting = card?.ai_status === "waiting";
 
    const handleStopAi = async () => {
      try {
@@ -679,6 +681,27 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
        setErrorMessage("Failed to resume AI. Is opencode running?");
      }
     };
+
+   const handleConcludeAi = async () => {
+     try {
+       const updatedCard = await api.concludeAi(cardId);
+       dispatch(updateCardFromSSE(updatedCard));
+     } catch (err) {
+       console.error("Failed to conclude AI:", err);
+       setErrorMessage("Failed to ask AI for conclusion.");
+     }
+   };
+
+   const handleRetryAi = async () => {
+     try {
+       const updatedCard = await api.retryAi(cardId);
+       dispatch(updateCardFromSSE(updatedCard));
+       onClose();
+     } catch (err) {
+       console.error("Failed to retry AI:", err);
+       setErrorMessage("Failed to retry card.");
+     }
+   };
 
   const handleMerge = async () => {
     setMerging(true);
@@ -1266,16 +1289,43 @@ export const CardDetailDialog: React.FC<CardDetailDialogProps> = ({ open, onClos
               </Box>
             </Box>
             <Chip
-              label={card.ai_status}
+              label={card.ai_status === "waiting" ? "waiting (long-running task)" : card.ai_status}
               color={
                 card.ai_status === "completed" ? "success" :
                 card.ai_status === "waiting_input" ? "warning" :
+                card.ai_status === "waiting" ? "info" :
                 card.ai_status === "cancelled" ? "default" :
                 card.ai_status === "failed" ? "error" :
                 "primary"
               }
-              sx={{ mb: 2 }}
+              sx={{ mb: 1 }}
             />
+            {(isAiFailed || isAiWaiting) && (
+              <Box sx={{ mb: 2 }}>
+                <>
+                  {aiProgress.failure_reason && (
+                    <Typography variant="body2" color="error" sx={{ mb: 1 }}>
+                      {`Reason: ${aiProgress.failure_reason}`}
+                    </Typography>
+                  )}
+                  {isAiWaiting && aiProgress.waiting_tool && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {`Waiting on tool: ${aiProgress.waiting_tool}`}
+                    </Typography>
+                  )}
+                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                    {card.ai_session_id && (
+                      <Button variant="outlined" size="small" onClick={handleConcludeAi}>
+                        Ask AI to Conclude
+                      </Button>
+                    )}
+                    <Button variant="outlined" size="small" color="warning" onClick={handleRetryAi}>
+                      Retry from Scratch
+                    </Button>
+                  </Box>
+                </>
+              </Box>
+            )}
             {aiTotalTodos > 0 && (
               <>
                 <Typography variant="body2" gutterBottom>

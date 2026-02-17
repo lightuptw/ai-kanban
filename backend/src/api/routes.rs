@@ -57,6 +57,8 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         .route("/{id}/generate-plan", post(handlers::cards::generate_plan))
         .route("/{id}/stop-ai", post(handlers::cards::stop_ai))
         .route("/{id}/resume-ai", post(handlers::cards::resume_ai))
+        .route("/{id}/conclude-ai", post(handlers::cards::conclude_ai))
+        .route("/{id}/retry-ai", post(handlers::cards::retry_ai))
         .route(
             "/{id}/questions/{question_id}/answer",
             post(handlers::questions::answer_question),

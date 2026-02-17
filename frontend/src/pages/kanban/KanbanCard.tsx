@@ -162,12 +162,15 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
     if (aiStatus === "waiting_input") {
       return "#ff3300";
     }
+    if (aiStatus === "waiting") {
+      return "#f57c00";
+    }
 
     return STAGE_COLORS[stage as keyof typeof STAGE_COLORS] || "#376fd0";
   };
 
   const isAiActive =
-    aiStatus === "planning" || aiStatus === "working" || aiStatus === "dispatched" || aiStatus === "waiting_input";
+    aiStatus === "planning" || aiStatus === "working" || aiStatus === "dispatched" || aiStatus === "waiting_input" || aiStatus === "waiting";
 
   const handleClick = (e: React.MouseEvent) => {
     console.log('Card clicked!');

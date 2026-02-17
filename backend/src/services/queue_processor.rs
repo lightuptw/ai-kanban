@@ -180,12 +180,17 @@ impl QueueProcessor {
 
         let cutoff = Utc::now() - chrono::Duration::minutes(timeout_minutes);
         let cards = sqlx::query_as::<_, Card>(
-            "SELECT * FROM cards WHERE ai_status IN ('dispatched', 'working')",
+            "SELECT * FROM cards WHERE ai_status IN ('dispatched', 'working', 'waiting')",
         )
         .fetch_all(&self.db)
         .await?;
 
         for card in cards {
+            if card.ai_status == "waiting" {
+                self.check_waiting_card(&card).await;
+                continue;
+            }
+
             let updated_at = match chrono::DateTime::parse_from_rfc3339(&card.updated_at) {
                 Ok(parsed) => parsed.with_timezone(&Utc),
                 Err(error) => {
@@ -209,31 +214,22 @@ impl QueueProcessor {
                 } else {
                     "failed"
                 };
-                if let Err(error) = self
-                    .mark_card_status_and_emit(&card.id, target_status)
-                    .await
-                {
-                    tracing::warn!(
-                        card_id = card.id,
-                        error = %error,
-                        "Failed to recover stuck card without session id"
-                    );
-                    continue;
-                }
-
-                tracing::warn!(
-                    card_id = card.id,
-                    ai_status = card.ai_status,
-                    target_status,
-                    "Recovered stuck card with missing session id"
-                );
+                let _ = self
+                    .mark_card_status_and_emit(
+                        &card,
+                        target_status,
+                        "No AI session ID found",
+                    )
+                    .await;
                 continue;
             };
 
             let session_url = format!("{}/session/{}", self.opencode_url, session_id);
-            let is_stuck = match self.http_client.get(&session_url).send().await {
-                Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => true,
-                Ok(response) if !response.status().is_success() => false,
+            let (is_stuck, reason) = match self.http_client.get(&session_url).send().await {
+                Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+                    (true, "OpenCode session not found".to_string())
+                }
+                Ok(response) if !response.status().is_success() => (false, String::new()),
                 Ok(response) => match response.json::<serde_json::Value>().await {
                     Ok(body) => {
                         let status = body
@@ -248,30 +244,52 @@ impl QueueProcessor {
                                     .or_else(|| status.as_str())
                             })
                             .unwrap_or("idle");
-                        status != "busy"
+                        if status == "busy" {
+                            (false, String::new())
+                        } else {
+                            (true, format!("Session status: {status}"))
+                        }
                     }
-                    Err(error) => {
-                        tracing::warn!(
-                            card_id = card.id,
-                            session_id,
-                            error = %error,
-                            "Failed to decode session status while checking stuck cards"
-                        );
-                        true
-                    }
+                    Err(error) => (true, format!("Failed to decode session: {error}")),
                 },
-                Err(error) => {
-                    tracing::warn!(
-                        card_id = card.id,
-                        session_id,
-                        error = %error,
-                        "Failed to fetch session while checking stuck cards"
-                    );
-                    true
-                }
+                Err(error) => (true, format!("Failed to reach OpenCode: {error}")),
             };
 
             if !is_stuck {
+                continue;
+            }
+
+            if let Some(tool_state) = self.check_session_has_running_tool(session_id).await {
+                tracing::info!(
+                    card_id = card.id,
+                    session_id,
+                    tool = tool_state,
+                    "Card has running tool call — marking as waiting instead of failed"
+                );
+                let now = Utc::now().to_rfc3339();
+                let mut progress: serde_json::Value =
+                    serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({}));
+                progress["waiting_since"] = json!(now);
+                progress["waiting_tool"] = json!(tool_state);
+                let _ = sqlx::query(
+                    "UPDATE cards SET ai_status = 'waiting', ai_progress = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(progress.to_string())
+                .bind(&now)
+                .bind(&card.id)
+                .execute(&self.db)
+                .await;
+
+                let event = WsEvent::AiStatusChanged {
+                    card_id: card.id.clone(),
+                    status: "waiting".to_string(),
+                    progress,
+                    stage: card.stage.clone(),
+                    ai_session_id: card.ai_session_id.clone(),
+                };
+                if let Ok(payload) = serde_json::to_string(&event) {
+                    let _ = self.sse_tx.send(payload);
+                }
                 continue;
             }
 
@@ -281,8 +299,13 @@ impl QueueProcessor {
                 "failed"
             };
 
+            let full_reason = format!(
+                "{reason}; last updated {} min ago",
+                (Utc::now() - updated_at).num_minutes()
+            );
+
             if let Err(error) = self
-                .mark_card_status_and_emit(&card.id, target_status)
+                .mark_card_status_and_emit(&card, target_status, &full_reason)
                 .await
             {
                 tracing::warn!(
@@ -299,6 +322,7 @@ impl QueueProcessor {
                 session_id,
                 ai_status = card.ai_status,
                 target_status,
+                reason = full_reason.as_str(),
                 "Recovered stuck card"
             );
         }
@@ -306,29 +330,103 @@ impl QueueProcessor {
         Ok(())
     }
 
+    async fn check_session_has_running_tool(&self, session_id: &str) -> Option<String> {
+        let messages_url = format!(
+            "{}/session/{}/message",
+            self.opencode_url, session_id
+        );
+        let response = self.http_client.get(&messages_url).send().await.ok()?;
+        let msgs: Vec<serde_json::Value> = response.json().await.ok()?;
+        let last = msgs.last()?;
+        for part in last.get("parts")?.as_array()? {
+            if part.get("type").and_then(|t| t.as_str()) == Some("tool") {
+                let state = part.get("state").and_then(|s| s.as_object())?;
+                let status = state.get("status").and_then(|s| s.as_str())?;
+                if status == "running" || status == "pending" {
+                    let tool_name = part
+                        .get("tool")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("unknown");
+                    return Some(tool_name.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    async fn check_waiting_card(&self, card: &Card) {
+        let Some(session_id) = card.ai_session_id.as_deref() else {
+            return;
+        };
+        if self.check_session_has_running_tool(session_id).await.is_some() {
+            return;
+        }
+        let session_url = format!("{}/session/{}", self.opencode_url, session_id);
+        let is_busy = match self.http_client.get(&session_url).send().await {
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(body) => {
+                    let status = body
+                        .get("status")
+                        .and_then(|s| {
+                            if s.is_null() { None } else { s.get("type").and_then(|t| t.as_str()).or_else(|| s.as_str()) }
+                        })
+                        .unwrap_or("idle");
+                    status == "busy"
+                }
+                _ => false,
+            },
+            _ => return,
+        };
+        if is_busy {
+            let now = Utc::now().to_rfc3339();
+            let _ = sqlx::query("UPDATE cards SET ai_status = 'working', updated_at = ? WHERE id = ?")
+                .bind(&now)
+                .bind(&card.id)
+                .execute(&self.db)
+                .await;
+            let event = WsEvent::AiStatusChanged {
+                card_id: card.id.clone(),
+                status: "working".to_string(),
+                progress: serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({})),
+                stage: card.stage.clone(),
+                ai_session_id: card.ai_session_id.clone(),
+            };
+            if let Ok(payload) = serde_json::to_string(&event) {
+                let _ = self.sse_tx.send(payload);
+            }
+        }
+    }
+
     async fn mark_card_status_and_emit(
         &self,
-        card_id: &str,
+        card: &Card,
         status: &str,
+        reason: &str,
     ) -> Result<(), KanbanError> {
-        sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
-            .bind(status)
-            .bind(Utc::now().to_rfc3339())
-            .bind(card_id)
-            .execute(&self.db)
-            .await?;
+        let now = Utc::now().to_rfc3339();
+        let mut progress: serde_json::Value =
+            serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({}));
+        if status == "failed" {
+            progress["failure_reason"] = json!(reason);
+            progress["failed_at"] = json!(now);
+        }
 
-        let card: Option<Card> = sqlx::query_as("SELECT * FROM cards WHERE id = ?")
-            .bind(card_id)
-            .fetch_optional(&self.db)
-            .await?;
+        sqlx::query(
+            "UPDATE cards SET ai_status = ?, ai_progress = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(status)
+        .bind(progress.to_string())
+        .bind(&now)
+        .bind(&card.id)
+        .execute(&self.db)
+        .await?;
 
         let event = WsEvent::AiStatusChanged {
-            card_id: card_id.to_string(),
-            status: "failed".to_string(),
-            progress: json!({}),
-            stage: card.as_ref().map(|c| c.stage.clone()).unwrap_or_default(),
-            ai_session_id: card.and_then(|c| c.ai_session_id),
+            card_id: card.id.to_string(),
+            status: status.to_string(),
+            progress,
+            stage: card.stage.clone(),
+            ai_session_id: card.ai_session_id.clone(),
         };
         if let Ok(payload) = serde_json::to_string(&event) {
             let _ = self.sse_tx.send(payload);

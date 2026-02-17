@@ -148,6 +148,12 @@ export const api = {
   resumeAi: (cardId: string) =>
     fetchAPI<Card>(`/api/cards/${cardId}/resume-ai`, { method: "POST" }),
 
+  concludeAi: (cardId: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/conclude-ai`, { method: "POST" }),
+
+  retryAi: (cardId: string) =>
+    fetchAPI<Card>(`/api/cards/${cardId}/retry-ai`, { method: "POST" }),
+
   getCardQuestions: (cardId: string) =>
     fetchAPI<AiQuestion[]>(`/api/cards/${cardId}/questions`),
 

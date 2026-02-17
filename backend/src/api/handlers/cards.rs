@@ -1457,6 +1457,151 @@ pub async fn resume_ai(
     Ok(Json(updated))
 }
 
+pub async fn conclude_ai(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    let Some(session_id) = card.ai_session_id.as_deref().filter(|s| !s.is_empty()) else {
+        return Err(KanbanError::BadRequest(
+            "Card has no AI session to conclude".into(),
+        ));
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+        .bind("working")
+        .bind(&now)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    let event = WsEvent::AiStatusChanged {
+        card_id: id.clone(),
+        status: "working".to_string(),
+        progress: json!({"concluding": true}),
+        stage: card.stage.clone(),
+        ai_session_id: card.ai_session_id.clone(),
+    };
+    let _ = state
+        .sse_tx
+        .send(serde_json::to_string(&event).unwrap_or_default());
+
+    let prompt = concat!(
+        "STOP all current work immediately. Do NOT start any new tasks or tool calls.\n\n",
+        "Write a CONCLUSION COMMENT on this card summarizing:\n",
+        "1. What was accomplished so far\n",
+        "2. What is still pending/incomplete\n",
+        "3. Any blockers or issues encountered\n",
+        "4. Recommended next steps\n\n",
+        "Use the kanban_add_comment tool to post this summary. ",
+        "Then stop — do not continue any further work.",
+    );
+
+    let message_url = format!(
+        "{}/session/{}/message",
+        state.config.opencode_url, session_id
+    );
+    let http_client = state.http_client.clone();
+    let db_clone = pool.clone();
+    let card_id_clone = id.clone();
+    let sse_tx_clone = state.sse_tx.clone();
+    let card_stage = card.stage.clone();
+    let card_session = card.ai_session_id.clone();
+
+    tokio::spawn(async move {
+        let result = http_client
+            .post(&message_url)
+            .json(&json!({"parts": [{"type": "text", "text": prompt}]}))
+            .send()
+            .await;
+
+        let final_status = match result {
+            Ok(resp) if resp.status().is_success() => "idle",
+            _ => "failed",
+        };
+
+        let _ = sqlx::query("UPDATE cards SET ai_status = ?, updated_at = ? WHERE id = ?")
+            .bind(final_status)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&card_id_clone)
+            .execute(&db_clone)
+            .await;
+
+        let event = WsEvent::AiStatusChanged {
+            card_id: card_id_clone,
+            status: final_status.to_string(),
+            progress: json!({"concluded": true}),
+            stage: card_stage,
+            ai_session_id: card_session,
+        };
+        if let Ok(payload) = serde_json::to_string(&event) {
+            let _ = sse_tx_clone.send(payload);
+        }
+    });
+
+    let updated = CardService::get_card_by_id(pool, &id).await?;
+    Ok(Json(updated))
+}
+
+pub async fn retry_ai(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<CardResponse>, KanbanError> {
+    let pool = state.require_db()?;
+    let card = CardService::get_card_model(pool, &id).await?;
+
+    if card.stage != "in_progress" && card.stage != "plan" {
+        return Err(KanbanError::BadRequest(
+            "Retry is only available for cards in in_progress or plan stage".into(),
+        ));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut progress: serde_json::Value =
+        serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({}));
+    progress["retry_count"] =
+        json!(progress.get("retry_count").and_then(|v| v.as_u64()).unwrap_or(0) + 1);
+    progress.as_object_mut().map(|m| {
+        m.remove("failure_reason");
+        m.remove("failed_at");
+    });
+
+    sqlx::query(
+        "UPDATE cards SET ai_status = 'queued', ai_session_id = NULL, ai_progress = ?, stage = 'todo', updated_at = ? WHERE id = ?",
+    )
+    .bind(progress.to_string())
+    .bind(&now)
+    .bind(&id)
+    .execute(pool)
+    .await?;
+
+    let move_event = WsEvent::CardMoved {
+        card_id: id.clone(),
+        from_stage: card.stage.clone(),
+        to_stage: "todo".to_string(),
+    };
+    if let Ok(payload) = serde_json::to_string(&move_event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
+    let event = WsEvent::AiStatusChanged {
+        card_id: id.clone(),
+        status: "queued".to_string(),
+        progress,
+        stage: "todo".to_string(),
+        ai_session_id: None,
+    };
+    if let Ok(payload) = serde_json::to_string(&event) {
+        let _ = state.sse_tx.send(payload);
+    }
+
+    let updated = CardService::get_card_by_id(pool, &id).await?;
+    Ok(Json(updated))
+}
+
 pub async fn delete_card(
     State(state): State<AppState>,
     Path(id): Path<String>,
