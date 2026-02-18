@@ -40,36 +40,24 @@ interface AiQuestion {
   created_at: string;
 }
 
-function buildHeaders(options?: RequestInit, token?: string | null): Headers {
+function buildHeaders(options?: RequestInit): Headers {
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "application/json");
-
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
   return headers;
 }
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit, isRetry = false): Promise<T> {
-  const token = localStorage.getItem("token");
-
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    headers: buildHeaders(options, token),
+    credentials: "include",
+    headers: buildHeaders(options),
   });
 
-  if (response.status === 401 && !isRetry && token) {
+  if (response.status === 401 && !isRetry) {
     try {
       const { authService } = await import("./auth");
-      const newToken = await authService.refresh();
-
-      if (newToken) {
-        return fetchAPI<T>(endpoint, {
-          ...options,
-          headers: buildHeaders(options, newToken),
-        }, true);
-      }
+      await authService.refresh();
+      return fetchAPI<T>(endpoint, options, true);
     } catch {
       const { authService } = await import("./auth");
       authService.logout();
@@ -90,28 +78,17 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit, isRetry = fa
 }
 
 async function fetchMultipart<T>(endpoint: string, formData: FormData, isRetry = false): Promise<T> {
-  const token = localStorage.getItem("token");
-  const headers: Record<string, string> = {};
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: "POST",
-    headers,
+    credentials: "include",
     body: formData,
   });
 
-  if (response.status === 401 && !isRetry && token) {
+  if (response.status === 401 && !isRetry) {
     try {
       const { authService } = await import("./auth");
-      const newToken = await authService.refresh();
-
-      if (newToken) {
-        headers.Authorization = `Bearer ${newToken}`;
-        return fetchMultipart<T>(endpoint, formData, true);
-      }
+      await authService.refresh();
+      return fetchMultipart<T>(endpoint, formData, true);
     } catch {
       const { authService } = await import("./auth");
       authService.logout();

@@ -29,7 +29,9 @@ function App({ emotionCache = clientSideEmotionCache }) {
   useEffect(() => {
     if (!wsManager) {
       wsManager = new WebSocketManager(store.dispatch, store.getState);
-      wsManager.connect();
+      if (sessionStorage.getItem("auth_user")) {
+        wsManager.connect();
+      }
     }
 
     const handleAuthLogin = () => {

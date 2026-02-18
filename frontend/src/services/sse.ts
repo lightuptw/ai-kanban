@@ -74,15 +74,14 @@ export class WebSocketManager {
       this.ws.close();
     }
 
-    const token = localStorage.getItem("token") || "";
-    if (!token) {
-      wsLog("[WS] No auth token, skipping connection");
+    if (!sessionStorage.getItem("auth_user")) {
+      wsLog("[WS] Not authenticated, skipping connection");
       return;
     }
 
     const apiUrl = new URL(API_BASE_URL);
     const protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${apiUrl.host}/ws/events?token=${encodeURIComponent(token)}`;
+    const wsUrl = `${protocol}//${apiUrl.host}/ws/events`;
 
     wsLog("[WS] Connecting to", wsUrl);
     this.ws = new WebSocket(wsUrl);

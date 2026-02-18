@@ -1,4 +1,4 @@
-use axum::http::HeaderValue;
+use axum::http::{header, HeaderValue, Method};
 use axum::routing::{get, patch, post};
 use axum::Router;
 use tower_http::cors::CorsLayer;
@@ -18,8 +18,16 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
         .collect();
     let cors = CorsLayer::new()
         .allow_origin(origins)
-        .allow_methods(tower_http::cors::Any)
-        .allow_headers(tower_http::cors::Any);
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::COOKIE])
+        .allow_credentials(true);
 
     let card_routes = Router::new()
         .route("/", post(handlers::cards::create_card))
@@ -170,6 +178,7 @@ pub fn create_router(state: AppState, config: &Config) -> Router {
             post(auth::handlers::upload_avatar).delete(auth::handlers::delete_avatar),
         )
         .route("/api/auth/me/avatar", post(auth::handlers::upload_avatar))
+        .route("/api/auth/logout", post(auth::handlers::logout))
         .route("/ws/events", get(handlers::ws::ws_events_handler))
         .route("/ws/logs/{card_id}", get(handlers::ws::ws_logs_handler))
         .route("/api/board", get(handlers::cards::get_board))
