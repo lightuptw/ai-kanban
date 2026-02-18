@@ -19,7 +19,7 @@ import { API_BASE_URL } from "../constants";
 /** Shape of WebSocket event payloads from the backend. */
 interface WsEventData {
   type: string;
-  card?: Card;
+  card?: Card & { board_id?: string };
   card_id?: string;
   board?: Board;
   board_id?: string;
@@ -113,6 +113,22 @@ export class WebSocketManager {
     };
   }
 
+  /** Check if a card belongs to the currently active board */
+  private isCardOnActiveBoard(card: Card): boolean {
+    const activeBoardId = this.getState().kanban.activeBoardId;
+    if (!card.board_id || !activeBoardId) return true; // no board info → allow (safe fallback)
+    return card.board_id === activeBoardId;
+  }
+
+  /** Check if a card_id exists in any column of the current board view */
+  private isCardInCurrentView(cardId: string): boolean {
+    const columns = this.getState().kanban.columns;
+    for (const stage of Object.keys(columns) as Array<keyof typeof columns>) {
+      if (columns[stage].some((c) => c.id === cardId)) return true;
+    }
+    return false;
+  }
+
   private handleEvent(event: WsEventData) {
     wsLog("[WS] Event:", event.type);
     const eventType = event.type;
@@ -120,13 +136,23 @@ export class WebSocketManager {
     switch (eventType) {
       case "cardCreated":
         if (event.card) {
-          this.dispatch(updateCardFromSSE(event.card as Card));
+          const card = event.card as Card;
+          if (!this.isCardOnActiveBoard(card)) {
+            wsLog("[WS] Ignoring cardCreated for different board:", card.board_id);
+            break;
+          }
+          this.dispatch(updateCardFromSSE(card));
         }
         break;
 
       case "cardUpdated":
         if (event.card) {
-          this.dispatch(updateCardFromSSE(event.card as Card));
+          const card = event.card as Card;
+          if (!this.isCardOnActiveBoard(card)) {
+            wsLog("[WS] Ignoring cardUpdated for different board:", card.board_id);
+            break;
+          }
+          this.dispatch(updateCardFromSSE(card));
         }
         break;
 
@@ -150,6 +176,15 @@ export class WebSocketManager {
 
       case "aiStatusChanged":
         if (event.card_id && event.status) {
+          const activeBoardId = this.getState().kanban.activeBoardId;
+          if (event.board_id && activeBoardId && event.board_id !== activeBoardId) {
+            wsLog("[WS] Ignoring aiStatusChanged for different board:", event.board_id);
+            break;
+          }
+          if (!this.isCardInCurrentView(event.card_id)) {
+            wsLog("[WS] Ignoring aiStatusChanged for card not in view:", event.card_id);
+            break;
+          }
           this.dispatch(
             updateCardAiStatus({
               cardId: event.card_id,

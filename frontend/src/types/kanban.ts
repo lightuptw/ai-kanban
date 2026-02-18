@@ -43,6 +43,7 @@ export interface Card {
   created_at: string;
   updated_at: string;
   ai_agent: string | null;
+  board_id?: string;
   subtask_count: number;
   subtask_completed: number;
   label_count: number;

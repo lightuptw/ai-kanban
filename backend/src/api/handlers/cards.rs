@@ -414,6 +414,7 @@ pub async fn move_card(
 
         let event = WsEvent::AiStatusChanged {
             card_id: id.clone(),
+            board_id: updated_card.board_id.clone(),
             status: updated_card.ai_status.clone(),
             progress: updated_card.ai_progress.clone(),
             stage: updated_card.stage.clone(),
@@ -598,6 +599,7 @@ pub async fn generate_plan(
 
     let plan_event = WsEvent::AiStatusChanged {
         card_id: card_id.clone(),
+        board_id: None,
         status: "planning".to_string(),
         progress: json!({}),
         stage: card.stage.clone(),
@@ -735,6 +737,7 @@ CRITICAL: The card_id for ALL tool calls is: {}",
         let broadcast_failed = |card_id: &str, stage: &str| {
             let event = WsEvent::AiStatusChanged {
                 card_id: card_id.to_string(),
+                board_id: None,
                 status: "failed".to_string(),
                 progress: json!({}),
                 stage: stage.to_string(),
@@ -1266,6 +1269,7 @@ pub async fn stop_ai(
 
     let event = WsEvent::AiStatusChanged {
         card_id: id.clone(),
+        board_id: None,
         status: "cancelled".to_string(),
         progress: json!({}),
         stage: card.stage.clone(),
@@ -1352,6 +1356,7 @@ pub async fn resume_ai(
 
             let event = WsEvent::AiStatusChanged {
                 card_id: id.clone(),
+                board_id: None,
                 status: resumed_status.to_string(),
                 progress: json!({}),
                 stage: card.stage.clone(),
@@ -1446,6 +1451,7 @@ pub async fn resume_ai(
 
     let event = WsEvent::AiStatusChanged {
         card_id: id.clone(),
+        board_id: None,
         status: fallback_status.to_string(),
         progress: json!({}),
         stage: card.stage.clone(),
@@ -1480,6 +1486,7 @@ pub async fn conclude_ai(
 
     let event = WsEvent::AiStatusChanged {
         card_id: id.clone(),
+        board_id: None,
         status: "working".to_string(),
         progress: json!({"concluding": true}),
         stage: card.stage.clone(),
@@ -1532,6 +1539,7 @@ pub async fn conclude_ai(
 
         let event = WsEvent::AiStatusChanged {
             card_id: card_id_clone,
+            board_id: None,
             status: final_status.to_string(),
             progress: json!({"concluded": true}),
             stage: card_stage,
@@ -1589,6 +1597,7 @@ pub async fn retry_ai(
 
     let event = WsEvent::AiStatusChanged {
         card_id: id.clone(),
+        board_id: None,
         status: "queued".to_string(),
         progress,
         stage: "todo".to_string(),

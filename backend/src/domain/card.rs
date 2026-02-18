@@ -18,6 +18,7 @@ pub struct Card {
     pub linked_documents: String,
     pub created_at: String,
     pub updated_at: String,
+    pub board_id: Option<String>,
     pub ai_agent: Option<String>,
     pub branch_name: String,
     pub worktree_path: String,

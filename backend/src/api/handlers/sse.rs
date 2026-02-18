@@ -66,6 +66,7 @@ pub enum WsEvent {
     },
     AiStatusChanged {
         card_id: String,
+        board_id: Option<String>,
         status: String,
         progress: serde_json::Value,
         stage: String,

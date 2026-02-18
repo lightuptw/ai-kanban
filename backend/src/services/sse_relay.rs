@@ -425,6 +425,7 @@ impl SseRelayService {
             serde_json::from_str(&updated_card.ai_progress).unwrap_or_else(|_| json!({}));
         let event = WsEvent::AiStatusChanged {
             card_id: updated_card.id.clone(),
+            board_id: updated_card.board_id.clone(),
             status: updated_card.ai_status.clone(),
             progress: progress.clone(),
             stage: updated_card.stage.clone(),

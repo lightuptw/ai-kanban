@@ -146,13 +146,28 @@ const kanbanSlice = createSlice({
     },
     updateCardFromSSE: (state, action: PayloadAction<Card>) => {
       const card = action.payload;
-      const stage = card.stage as Stage;
-      const index = state.columns[stage].findIndex((c) => c.id === card.id);
-      if (index !== -1) {
-        state.columns[stage][index] = card;
-      } else {
-        state.columns[stage].push(card);
-        state.columns[stage].sort((a, b) => a.position - b.position);
+      const newStage = card.stage as Stage;
+
+      // Remove card from any existing stage first (handles stage changes + dedup)
+      let found = false;
+      for (const stageName of Object.keys(state.columns) as Stage[]) {
+        const idx = state.columns[stageName].findIndex((c) => c.id === card.id);
+        if (idx !== -1) {
+          if (stageName === newStage) {
+            state.columns[stageName][idx] = card;
+            return;
+          }
+          state.columns[stageName].splice(idx, 1);
+          found = true;
+          break;
+        }
+      }
+
+      // Only add new cards if they were already in the view (found in another stage)
+      // or if they match the active board (SSE handler already filters, but this is a safety net)
+      if (found || !card.board_id || card.board_id === state.activeBoardId) {
+        state.columns[newStage].push(card);
+        state.columns[newStage].sort((a, b) => a.position - b.position);
       }
     },
     updateCardAiStatus: (

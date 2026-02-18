@@ -146,6 +146,7 @@ impl QueueProcessor {
 
                         let event = WsEvent::AiStatusChanged {
                             card_id: dispatch_card.id.clone(),
+                            board_id: dispatch_card.board_id.clone(),
                             status: "dispatched".to_string(),
                             progress: json!({}),
                             stage: "in_progress".to_string(),
@@ -282,6 +283,7 @@ impl QueueProcessor {
 
                 let event = WsEvent::AiStatusChanged {
                     card_id: card.id.clone(),
+                    board_id: card.board_id.clone(),
                     status: "waiting".to_string(),
                     progress,
                     stage: card.stage.clone(),
@@ -386,6 +388,7 @@ impl QueueProcessor {
                 .await;
             let event = WsEvent::AiStatusChanged {
                 card_id: card.id.clone(),
+                board_id: card.board_id.clone(),
                 status: "working".to_string(),
                 progress: serde_json::from_str(&card.ai_progress).unwrap_or_else(|_| json!({})),
                 stage: card.stage.clone(),
@@ -423,6 +426,7 @@ impl QueueProcessor {
 
         let event = WsEvent::AiStatusChanged {
             card_id: card.id.to_string(),
+            board_id: card.board_id.clone(),
             status: status.to_string(),
             progress,
             stage: card.stage.clone(),
